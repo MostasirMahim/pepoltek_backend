@@ -18,6 +18,8 @@ urlpatterns = [
     path('admin/invite-staff', views.admin_invite_staff, name='admin-invite-staff'),
 
     path('resend-otp', views.resend_verification_otp, name='auth-resend-otp'),
+    path('verify-otp', views.verify_email_otp, name='auth-verify-otp'),
+    path('change-email', views.change_verification_email, name='auth-change-email'),
     path('google/login', views.google_oauth_login, name='google-login'),
     path('google/callback', views.google_oauth_callback, name='google-callback'),
     path('google/verify', views.google_token_verify, name='google-verify'),

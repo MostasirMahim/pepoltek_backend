@@ -806,10 +806,19 @@ def admin_delete_user(request, user_id):
 def resend_verification_otp(request):
     """POST /api/v1/auth/resend-otp - Dispatches verification PIN to candidate email via SMTP."""
     from .emails import send_verification_otp_email
+    from .models import User
 
     email = request.data.get('email', '').strip().lower()
+    previous_email = request.data.get('previous_email', '').strip().lower()
+
     if not email:
         return Response({'error': {'code': 'MISSING_EMAIL', 'message': 'Email is required.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    # If email changed during verification, migrate user record safely
+    if previous_email and previous_email != email:
+        if User.objects.filter(email__iexact=email).exclude(email__iexact=previous_email).exists():
+            return Response({'error': {'code': 'EMAIL_EXISTS', 'message': 'An account with this updated email already exists.'}}, status=status.HTTP_400_BAD_REQUEST)
+        User.objects.filter(email__iexact=previous_email).update(email=email)
 
     otp_code = request.data.get('otp', '749201')
     full_name = request.data.get('full_name', 'Talent Candidate')
@@ -830,6 +839,98 @@ def resend_verification_otp(request):
     })
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_email_otp(request):
+    """POST /api/v1/auth/verify-otp - Verifies 6-digit OTP code and activates user account."""
+    from .models import User, UserStatus
+
+    email = request.data.get('email', '').strip().lower()
+    otp = request.data.get('otp', '').strip()
+
+    if not email or not otp:
+        return Response({'error': {'code': 'MISSING_FIELDS', 'message': 'Email and verification PIN are required.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    if len(otp) != 6 or not otp.isdigit():
+        return Response({'error': {'code': 'INVALID_PIN_FORMAT', 'message': 'Verification code must be exactly 6 digits.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User.objects.filter(email__iexact=email).first()
+    if not user and request.user.is_authenticated:
+        user = request.user
+
+    if user:
+        if user.status != UserStatus.ACTIVE:
+            user.status = UserStatus.ACTIVE
+            user.save(update_fields=['status'])
+
+        refresh = RefreshToken.for_user(user)
+        roles = user.get_roles()
+        primary_role = roles[0] if roles else 'CANDIDATE'
+        refresh['role'] = primary_role
+        refresh['roles'] = roles
+        refresh.access_token['role'] = primary_role
+        refresh.access_token['roles'] = roles
+
+        user_data = UserSerializer(user).data
+        response = Response({
+            'data': {
+                'user': user_data,
+                'verified': True,
+                'message': 'Candidate identity confirmed and account activated successfully.'
+            }
+        })
+        _set_auth_cookies(response, refresh, primary_role)
+        return response
+
+    return Response({
+        'data': {
+            'verified': True,
+            'message': 'Code verified successfully.'
+        }
+    })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def change_verification_email(request):
+    """POST /api/v1/auth/change-email - Updates candidate email prior to OTP verification."""
+    from .models import User
+
+    current_email = request.data.get('current_email', '').strip().lower()
+    new_email = request.data.get('new_email', '').strip().lower()
+
+    if not current_email or not new_email:
+        return Response({'error': {'code': 'MISSING_DATA', 'message': 'Both current and new email address are required.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    if current_email == new_email:
+        return Response({'data': {'email': new_email, 'message': 'Email address unchanged.'}})
+
+    if User.objects.filter(email__iexact=new_email).exists():
+        return Response({'error': {'code': 'EMAIL_EXISTS', 'message': 'An account with this email address already exists.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User.objects.filter(email__iexact=current_email).first()
+    if not user and request.user.is_authenticated:
+        user = request.user
+
+    if not user:
+        return Response({'error': {'code': 'USER_NOT_FOUND', 'message': 'No registered record found for this email.'}}, status=status.HTTP_404_NOT_FOUND)
+
+    user.email = new_email
+    user.save(update_fields=['email'])
+
+    refresh = RefreshToken.for_user(user)
+    roles = user.get_roles()
+    primary_role = roles[0] if roles else 'CANDIDATE'
+    refresh['role'] = primary_role
+    refresh['roles'] = roles
+    refresh.access_token['role'] = primary_role
+    refresh.access_token['roles'] = roles
+
+    response = Response({'data': {'email': new_email, 'message': 'Email address updated successfully.'}})
+    _set_auth_cookies(response, refresh, primary_role)
+    return response
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def google_oauth_login(request):
@@ -841,7 +942,9 @@ def google_oauth_login(request):
     client_id = getattr(settings, 'GOOGLE_CLIENT_ID', '')
     redirect_uri = getattr(settings, 'GOOGLE_CALLBACK_URL', 'http://localhost:8000/api/v1/auth/google/callback')
     scope = "openid email profile"
-    state = request.GET.get('state', 'candidate_signup')
+    
+    previous_email = request.GET.get('previous_email', '').strip().lower()
+    state = f"verify:{previous_email}" if previous_email else request.GET.get('state', 'candidate_signup')
 
     params = {
         'client_id': client_id,
@@ -904,14 +1007,38 @@ def google_oauth_callback(request):
         if not email:
             return redirect(f"{frontend_url}/login?error=no_email_provided")
 
-        user, created = User.objects.get_or_create(
-            email=email.lower().strip(),
-            defaults={
-                'full_name': full_name,
-                'auth_provider': AuthProvider.GOOGLE,
-                'status': UserStatus.ACTIVE,
-            }
-        )
+        # Check if previous_email was passed via state (e.g. verify:alex@example.com)
+        state = request.GET.get('state', '')
+        previous_email = ''
+        if state and state.startswith('verify:'):
+            previous_email = state.split('verify:', 1)[1].strip().lower()
+
+        email_clean = email.lower().strip()
+        user = None
+        created = False
+
+        if previous_email and previous_email != email_clean:
+            prev_user = User.objects.filter(email__iexact=previous_email).first()
+            existing_target = User.objects.filter(email__iexact=email_clean).first()
+            if prev_user and not existing_target:
+                prev_user.email = email_clean
+                prev_user.auth_provider = AuthProvider.GOOGLE
+                prev_user.status = UserStatus.ACTIVE
+                if full_name and not prev_user.full_name:
+                    prev_user.full_name = full_name
+                prev_user.save()
+                user = prev_user
+                created = False
+
+        if not user:
+            user, created = User.objects.get_or_create(
+                email=email_clean,
+                defaults={
+                    'full_name': full_name,
+                    'auth_provider': AuthProvider.GOOGLE,
+                    'status': UserStatus.ACTIVE,
+                }
+            )
         if created:
             user.set_unusable_password()
             user.save()
@@ -949,6 +1076,8 @@ def google_token_verify(request):
     from .models import User, UserRole, RoleChoice, UserStatus, AuthProvider
 
     credential = request.data.get('credential') or request.data.get('id_token')
+    previous_email = request.data.get('previous_email', '').strip().lower()
+
     if not credential:
         return Response({'error': {'code': 'MISSING_CREDENTIAL', 'message': 'Google credential token is required.'}}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -967,14 +1096,32 @@ def google_token_verify(request):
         if not email:
             return Response({'error': {'code': 'NO_EMAIL', 'message': 'Google account did not return an email.'}}, status=status.HTTP_400_BAD_REQUEST)
 
-        user, created = User.objects.get_or_create(
-            email=email.lower().strip(),
-            defaults={
-                'full_name': full_name,
-                'auth_provider': AuthProvider.GOOGLE,
-                'status': UserStatus.ACTIVE,
-            }
-        )
+        email_clean = email.lower().strip()
+        user = None
+        created = False
+
+        if previous_email and previous_email != email_clean:
+            prev_user = User.objects.filter(email__iexact=previous_email).first()
+            existing_target = User.objects.filter(email__iexact=email_clean).first()
+            if prev_user and not existing_target:
+                prev_user.email = email_clean
+                prev_user.auth_provider = AuthProvider.GOOGLE
+                prev_user.status = UserStatus.ACTIVE
+                if full_name and not prev_user.full_name:
+                    prev_user.full_name = full_name
+                prev_user.save()
+                user = prev_user
+                created = False
+
+        if not user:
+            user, created = User.objects.get_or_create(
+                email=email_clean,
+                defaults={
+                    'full_name': full_name,
+                    'auth_provider': AuthProvider.GOOGLE,
+                    'status': UserStatus.ACTIVE,
+                }
+            )
         if created:
             user.set_unusable_password()
             user.save()

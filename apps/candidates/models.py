@@ -1,4 +1,4 @@
-﻿"""
+"""
 candidates/models.py
 Candidate profile, skills, documents, and credential placeholders.
 Candidate is 1:1 with User. Created at end of intake flow.
@@ -79,10 +79,17 @@ class Candidate(BaseModel):
     availability_date = models.DateField(null=True, blank=True)
     open_to_work = models.BooleanField(default=True)
 
-    # Tech-specific
+    # Tech-specific & Bio
     portfolio_url = models.URLField(blank=True)
     github_url = models.URLField(blank=True)
     linkedin_url = models.URLField(blank=True)
+    bio = models.TextField(blank=True)
+    desired_hourly_rate = models.CharField(max_length=50, blank=True)
+    skills_cache = models.JSONField(default=list, blank=True)
+
+    # Data rights & account deletion requests
+    deletion_requested_at = models.DateTimeField(null=True, blank=True)
+    deletion_reason = models.TextField(blank=True)
 
     # Computed scores (updated by workers)
     profile_strength = models.PositiveSmallIntegerField(default=0)  # 0-100

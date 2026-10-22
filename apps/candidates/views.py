@@ -1,4 +1,9 @@
-import hashlib
+"""
+candidates/views.py
+DRF views for candidate workspace, profile CRUD, aggregated dashboard,
+credentials, documents, applications, pitch toggle, and GDPR data rights.
+Views call services and selectors.
+"""
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -6,21 +11,24 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
+
 from .models import (
     Candidate,
     SectorChoice,
     ExperienceLevel,
     WorkAuth,
-    ReadinessTier,
-    Document,
     DocumentType,
-    ScanStatus,
 )
 from .serializers import (
     CandidateProfileSerializer,
     CandidateApplicationItemSerializer,
     CandidateIntakeSerializer,
+    CandidateCredentialSerializer,
+    CandidateCreateCredentialSerializer,
+    CandidateDocumentSerializer,
 )
+from . import selectors
+from . import services
 from apps.ats.models import Application
 
 User = get_user_model()
@@ -28,38 +36,178 @@ User = get_user_model()
 
 class CandidateMeView(APIView):
     """
-    GET/PUT/PATCH /api/v1/candidates/me/
+    GET/PATCH /api/v1/candidates/me/
     Retrieve or update profile and readiness stats for the authenticated candidate.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not request.user.is_authenticated:
-            return Response({'data': None})
-
-        candidate, _ = Candidate.objects.get_or_create(
-            user=request.user,
-            defaults={
-                'full_name': request.user.full_name or request.user.email.split('@')[0],
-                'sector': SectorChoice.TECHNOLOGY,
-                'level': ExperienceLevel.SENIOR,
-                'readiness_tier': ReadinessTier.READY,
-                'profile_strength': 85,
-                'open_to_work': True,
-            }
-        )
+        candidate = selectors.get_candidate_for_user(request.user)
         serializer = CandidateProfileSerializer(candidate)
         return Response({'data': serializer.data})
 
     def patch(self, request):
-        if not request.user.is_authenticated:
-            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        candidate = get_object_or_404(Candidate, user=request.user)
-        serializer = CandidateProfileSerializer(candidate, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        candidate = selectors.get_candidate_for_user(request.user)
+        updated_candidate = services.update_candidate_profile(
+            candidate=candidate,
+            data=request.data,
+            user=request.user,
+            request=request,
+        )
+        serializer = CandidateProfileSerializer(updated_candidate)
         return Response({'data': serializer.data})
+
+
+class CandidateDashboardAggregationView(APIView):
+    """
+    GET /api/v1/candidates/me/dashboard/
+    Retrieve aggregated cockpit telemetry, profile strength, next best action,
+    pipeline statistics, and upcoming interview calls (SRS CAN-08).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        dashboard_data = selectors.get_candidate_dashboard_aggregation(candidate)
+        return Response({'data': dashboard_data})
+
+
+class CandidateCredentialsView(APIView):
+    """
+    GET/POST /api/v1/candidates/me/credentials/
+    List or add professional licenses and certifications (SRS CAN-04, VET-04).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        credentials = selectors.get_candidate_credentials(candidate)
+        serializer = CandidateCredentialSerializer(credentials, many=True)
+        return Response({'data': serializer.data})
+
+    def post(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        validator = CandidateCreateCredentialSerializer(data=request.data)
+        validator.is_valid(raise_exception=True)
+
+        credential = services.create_candidate_credential(
+            candidate=candidate,
+            data=validator.validated_data,
+            user=request.user,
+            request=request,
+        )
+        serializer = CandidateCredentialSerializer(credential)
+        return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
+
+
+class CandidateCredentialDetailView(APIView):
+    """
+    DELETE /api/v1/candidates/me/credentials/<uuid:id>/
+    Delete a candidate license or certification.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, id):
+        candidate = selectors.get_candidate_for_user(request.user)
+        deleted = services.delete_candidate_credential(
+            candidate=candidate,
+            credential_id=id,
+            user=request.user,
+            request=request,
+        )
+        if not deleted:
+            return Response({'error': 'Credential not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({'data': {'success': True, 'message': 'Credential deleted successfully.'}})
+
+
+class CandidateDocumentsView(APIView):
+    """
+    GET/POST /api/v1/candidates/me/documents/
+    List or upload candidate CVs, resumes, or certificates (SRS CAN-09, PAR-01).
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        documents = selectors.get_candidate_documents(candidate)
+        serializer = CandidateDocumentSerializer(documents, many=True)
+        return Response({'data': serializer.data})
+
+    def post(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        file_obj = request.FILES.get('file') or request.FILES.get('cv')
+        if not file_obj:
+            return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doc_type = request.data.get('doc_type', DocumentType.RESUME)
+        doc = services.create_candidate_document(
+            candidate=candidate,
+            file_obj=file_obj,
+            doc_type=doc_type,
+            user=request.user,
+            request=request,
+        )
+        serializer = CandidateDocumentSerializer(doc)
+        return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
+
+
+class CandidateDocumentDetailView(APIView):
+    """
+    DELETE /api/v1/candidates/me/documents/<uuid:id>/
+    Delete a candidate document.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, id):
+        candidate = selectors.get_candidate_for_user(request.user)
+        deleted = services.delete_candidate_document(
+            candidate=candidate,
+            document_id=id,
+            user=request.user,
+            request=request,
+        )
+        if not deleted:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({'data': {'success': True, 'message': 'Document deleted successfully.'}})
+
+
+class CandidateExportDataView(APIView):
+    """
+    POST /api/v1/candidates/me/export/
+    GDPR right to data portability (SRS CAN-09).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        export_payload = services.export_candidate_data(
+            candidate=candidate,
+            user=request.user,
+            request=request,
+        )
+        return Response({'data': export_payload})
+
+
+class CandidateDeleteRequestView(APIView):
+    """
+    POST /api/v1/candidates/me/delete-request/
+    GDPR right to erasure (SRS CAN-09).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
+        reason = request.data.get('reason', 'GDPR user-requested account deletion')
+        result = services.request_candidate_deletion(
+            candidate=candidate,
+            reason=reason,
+            user=request.user,
+            request=request,
+        )
+        return Response({'data': result})
 
 
 class CandidateApplicationsView(APIView):
@@ -70,14 +218,10 @@ class CandidateApplicationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not request.user.is_authenticated:
-            return Response({'data': []})
-
-        candidate = Candidate.objects.filter(user=request.user).first()
-        if not candidate:
-            return Response({'data': []})
-
-        applications = Application.objects.filter(candidate=candidate).select_related('requisition', 'requisition__client')
+        candidate = selectors.get_candidate_for_user(request.user)
+        applications = Application.objects.filter(candidate=candidate).select_related(
+            'requisition', 'requisition__client'
+        )
         serializer = CandidateApplicationItemSerializer(applications, many=True)
         return Response({'data': serializer.data})
 
@@ -90,16 +234,18 @@ class CandidatePitchToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request):
+        candidate = selectors.get_candidate_for_user(request.user)
         authorized = request.data.get('authorized', True)
-        if request.user.is_authenticated:
-            candidate = Candidate.objects.filter(user=request.user).first()
-            if candidate:
-                candidate.open_to_work = bool(authorized)
-                candidate.save(update_fields=['open_to_work', 'updated_at'])
+        updated_candidate = services.toggle_open_to_work(
+            candidate=candidate,
+            open_to_work=authorized,
+            user=request.user,
+            request=request,
+        )
 
         return Response({
             'data': {
-                'open_to_work': bool(authorized),
+                'open_to_work': updated_candidate.open_to_work,
                 'message': 'Pitch authorization status updated.',
             }
         })
@@ -146,18 +292,10 @@ class CandidateIntakeView(APIView):
         valid_auths = [c[0] for c in WorkAuth.choices]
         work_auth = work_auth_val if work_auth_val in valid_auths else ''
 
-        # Map salary
-        expected_comp = None
-        if data.get('expected_salary'):
-            try:
-                expected_comp = int(float(data['expected_salary']))
-            except (ValueError, TypeError):
-                pass
-
-        # Candidate profile
-        candidate, _ = Candidate.objects.get_or_create(
-            user=user,
-            defaults={
+        candidate = selectors.get_candidate_for_user(user)
+        services.update_candidate_profile(
+            candidate=candidate,
+            data={
                 'full_name': full_name,
                 'sector': sector,
                 'level': level,
@@ -166,51 +304,22 @@ class CandidateIntakeView(APIView):
                 'domain': data.get('current_job_title', ''),
                 'work_auth': work_auth,
                 'engagement_prefs': data.get('engagement_prefs', []),
-                'expected_comp_min': expected_comp,
-                'expected_comp_max': expected_comp,
                 'linkedin_url': data.get('linkedin_profile', ''),
                 'open_to_work': data.get('profile_visible', True),
-                'profile_strength': 85,
-                'readiness_tier': ReadinessTier.READY,
-            }
+            },
+            user=user,
+            request=request,
         )
-
-        # Update candidate fields if already existing
-        candidate.full_name = full_name
-        candidate.sector = sector
-        candidate.level = level
-        if data.get('phone'):
-            candidate.phone = data['phone']
-        if data.get('current_location'):
-            candidate.location = data['current_location']
-        if data.get('current_job_title'):
-            candidate.domain = data['current_job_title']
-        if work_auth:
-            candidate.work_auth = work_auth
-        if data.get('engagement_prefs'):
-            candidate.engagement_prefs = data['engagement_prefs']
-        if expected_comp:
-            candidate.expected_comp_min = expected_comp
-            candidate.expected_comp_max = expected_comp
-        if data.get('linkedin_profile'):
-            candidate.linkedin_url = data['linkedin_profile']
-        candidate.open_to_work = data.get('profile_visible', True)
-        candidate.save()
 
         # Handle file upload if present
         cv_file = request.FILES.get('cv')
         if cv_file:
-            content = cv_file.read()
-            file_hash = hashlib.sha256(content).hexdigest()
-            Document.objects.create(
+            services.create_candidate_document(
                 candidate=candidate,
+                file_obj=cv_file,
                 doc_type=DocumentType.RESUME,
-                storage_key=f'resumes/{candidate.id}/{cv_file.name}',
-                original_filename=cv_file.name,
-                mime_type=cv_file.content_type or 'application/octet-stream',
-                size_bytes=cv_file.size,
-                sha256=file_hash,
-                scan_status=ScanStatus.CLEAN,
+                user=user,
+                request=request,
             )
 
         return Response({

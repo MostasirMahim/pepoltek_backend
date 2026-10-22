@@ -1,11 +1,17 @@
+"""
+candidates/serializers.py
+DRF serializers for candidate profile, dashboard aggregation, credentials, and documents.
+"""
 from rest_framework import serializers
-from .models import Candidate
+from .models import Candidate, Document
 from apps.ats.models import Application
+from apps.vetting.models import Credential
 
 
 class CandidateProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', read_only=True)
     referral_code = serializers.CharField(source='user.referral_code', read_only=True)
+    skills = serializers.SerializerMethodField()
 
     class Meta:
         model = Candidate
@@ -21,14 +27,70 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
             'timezone',
             'work_auth',
             'engagement_prefs',
+            'desired_hourly_rate',
             'availability_date',
             'open_to_work',
+            'portfolio_url',
+            'github_url',
+            'linkedin_url',
+            'bio',
+            'skills',
             'profile_strength',
             'cv_score',
             'vetting_status',
             'readiness_tier',
             'referral_code',
         ]
+
+    def get_skills(self, obj: Candidate) -> list[str]:
+        if obj.skills_cache:
+            return obj.skills_cache
+        return list(obj.skills.values_list('skill__name', flat=True))
+
+
+class CandidateCredentialSerializer(serializers.ModelSerializer):
+    issued_on = serializers.DateField(format='%Y-%m-%d', required=False, allow_null=True)
+    expires_on = serializers.DateField(format='%Y-%m-%d', required=False, allow_null=True)
+
+    class Meta:
+        model = Credential
+        fields = [
+            'id',
+            'kind',
+            'name',
+            'license_number',
+            'jurisdiction',
+            'issued_on',
+            'expires_on',
+            'status',
+            'verified_at',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'status', 'verified_at', 'created_at']
+
+
+class CandidateCreateCredentialSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=Credential.Kind.choices, default=Credential.Kind.LICENSE)
+    name = serializers.CharField(max_length=255)
+    license_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    jurisdiction = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    issued_on = serializers.DateField(required=False, allow_null=True)
+    expires_on = serializers.DateField(required=False, allow_null=True)
+
+
+class CandidateDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Document
+        fields = [
+            'id',
+            'doc_type',
+            'original_filename',
+            'size_bytes',
+            'version',
+            'scan_status',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'original_filename', 'size_bytes', 'version', 'scan_status', 'created_at']
 
 
 class CandidateApplicationItemSerializer(serializers.ModelSerializer):
@@ -44,7 +106,9 @@ class CandidateApplicationItemSerializer(serializers.ModelSerializer):
     budget_min = serializers.IntegerField(source='requisition.budget_min', read_only=True)
     budget_max = serializers.IntegerField(source='requisition.budget_max', read_only=True)
     visibility = serializers.CharField(source='requisition.visibility', read_only=True)
-    bounty_amount = serializers.DecimalField(source='requisition.bounty_amount', max_digits=8, decimal_places=2, read_only=True)
+    bounty_amount = serializers.DecimalField(
+        source='requisition.bounty_amount', max_digits=8, decimal_places=2, read_only=True
+    )
 
     class Meta:
         model = Application
@@ -97,4 +161,3 @@ class CandidateIntakeSerializer(serializers.Serializer):
     profile_visible = serializers.BooleanField(required=False, default=True)
     source = serializers.CharField(required=False, allow_blank=True)
     referral_name = serializers.CharField(required=False, allow_blank=True)
-
