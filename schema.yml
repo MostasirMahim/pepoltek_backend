@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Pepoltek API
+  version: 1.0.0
+  description: Workforce platform API - AI-assisted recruitment, candidate matching,
+    and referral network.
+paths:
+  /api/v1/auth/login:
+    post:
+      operationId: auth_login_create
+      description: POST /api/v1/auth/login
+      tags:
+      - auth
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/logout:
+    post:
+      operationId: auth_logout_create
+      description: POST /api/v1/auth/logout - blacklists refresh token, clears cookies.
+      tags:
+      - auth
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/me:
+    get:
+      operationId: auth_me_retrieve
+      description: GET /api/v1/me - returns current user with roles.
+      tags:
+      - auth
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/register:
+    post:
+      operationId: auth_register_create
+      description: POST /api/v1/auth/register
+      tags:
+      - auth
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/health/:
+    get:
+      operationId: health_retrieve
+      description: |-
+        GET /api/v1/health/
+        Used by load balancers and uptime monitors.
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/documents/:
+    get:
+      operationId: cms_api_main_documents_retrieve
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/documents/{id}/:
+    get:
+      operationId: cms_api_main_documents_retrieve_2
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/documents/find/:
+    get:
+      operationId: cms_api_main_documents_find_retrieve
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/images/:
+    get:
+      operationId: cms_api_main_images_retrieve
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/images/{id}/:
+    get:
+      operationId: cms_api_main_images_retrieve_2
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/images/find/:
+    get:
+      operationId: cms_api_main_images_find_retrieve
+      tags:
+      - cms
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/pages/:
+    get:
+      operationId: cms_api_main_pages_retrieve
+      tags:
+      - cms
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/pages/{id}/:
+    get:
+      operationId: cms_api_main_pages_retrieve_2
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - cms
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/pages/{id}/action/{action_name}/:
+    post:
+      operationId: cms_api_main_pages_action_create
+      parameters:
+      - in: path
+        name: action_name
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - cms
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /cms/api/main/pages/find/:
+    get:
+      operationId: cms_api_main_pages_find_retrieve
+      tags:
+      - cms
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid

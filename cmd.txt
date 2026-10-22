@@ -1,0 +1,26 @@
+# Pepoltek Backend Essential Commands
+
+# 1. Activate Environment (Git Bash / MINGW64)
+source .venv/Scripts/activate : Activate the virtual environment in Git Bash.
+
+# 2. Activate Environment (PowerShell / CMD)
+.\.venv\Scripts\Activate.ps1 : Activate the virtual environment in PowerShell.
+.\.venv\Scripts\activate.bat : Activate the virtual environment in Windows CMD.
+
+# 3. Run Backend Development Server
+python manage.py runserver : Start the local backend API server on port 8000.
+
+# 4. Database Migrations
+python manage.py makemigrations : Detect model updates and create migration files.
+python manage.py migrate : Apply all pending database migrations.
+python manage.py showmigrations : Check which migrations have been applied.
+
+# 5. Admin & Management
+python manage.py createsuperuser : Create an admin superuser account.
+python manage.py check : Check project models and settings for issues.
+
+# 6. Automated Testing
+pytest : Run all automated backend tests.
+
+# 7. Package Installation
+pip install -r requirements/base.txt : Install core project dependencies.

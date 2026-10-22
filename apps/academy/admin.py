@@ -1,0 +1,2 @@
+# academy/admin.py
+

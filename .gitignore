@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment variables & local secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# SQLite database files
+*.sqlite3
+*.db
+db.sqlite3
+dev_db.sqlite3
+
+# Django static and media collections
+staticfiles/
+media/
+mediafiles/
+
+# Testing, typing & linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Celery & background runtime files
+*.log
+celerybeat-schedule
+celerybeat.pid
+
+# Editor and OS artifacts
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini

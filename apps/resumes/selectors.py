@@ -1,0 +1,2 @@
+# resumes/selectors.py
+

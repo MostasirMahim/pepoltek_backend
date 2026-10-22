@@ -1,0 +1,100 @@
+from rest_framework import serializers
+from .models import Candidate
+from apps.ats.models import Application
+
+
+class CandidateProfileSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(source='user.email', read_only=True)
+    referral_code = serializers.CharField(source='user.referral_code', read_only=True)
+
+    class Meta:
+        model = Candidate
+        fields = [
+            'id',
+            'full_name',
+            'email',
+            'phone',
+            'sector',
+            'domain',
+            'level',
+            'location',
+            'timezone',
+            'work_auth',
+            'engagement_prefs',
+            'availability_date',
+            'open_to_work',
+            'profile_strength',
+            'cv_score',
+            'vetting_status',
+            'readiness_tier',
+            'referral_code',
+        ]
+
+
+class CandidateApplicationItemSerializer(serializers.ModelSerializer):
+    job_title = serializers.CharField(source='requisition.title', read_only=True)
+    requisition_title = serializers.CharField(source='requisition.title', read_only=True)
+    requisition_id = serializers.CharField(source='requisition.id', read_only=True)
+    client_name = serializers.CharField(source='requisition.client.name', read_only=True)
+    location = serializers.CharField(source='requisition.location', read_only=True)
+    sector = serializers.CharField(source='requisition.sector', read_only=True)
+    level = serializers.CharField(source='requisition.level', read_only=True)
+    headcount = serializers.IntegerField(source='requisition.headcount', read_only=True)
+    skills = serializers.JSONField(source='requisition.skills', read_only=True)
+    budget_min = serializers.IntegerField(source='requisition.budget_min', read_only=True)
+    budget_max = serializers.IntegerField(source='requisition.budget_max', read_only=True)
+    visibility = serializers.CharField(source='requisition.visibility', read_only=True)
+    bounty_amount = serializers.DecimalField(source='requisition.bounty_amount', max_digits=8, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = Application
+        fields = [
+            'id',
+            'job_title',
+            'requisition_title',
+            'requisition_id',
+            'client_name',
+            'location',
+            'sector',
+            'level',
+            'headcount',
+            'skills',
+            'budget_min',
+            'budget_max',
+            'visibility',
+            'bounty_amount',
+            'stage',
+            'sub_stage',
+            'source',
+            'created_at',
+        ]
+
+
+class CandidateIntakeSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    current_location = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    sector = serializers.CharField(max_length=20, default='technology')
+    current_job_title = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    level = serializers.CharField(max_length=20, default='senior')
+    years_of_experience = serializers.IntegerField(required=False, default=0)
+    domain_skills = serializers.CharField(required=False, allow_blank=True)
+    work_auth = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    engagement_prefs = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    current_salary = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    expected_salary = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    financial_benefits = serializers.CharField(required=False, allow_blank=True)
+    english_proficiency = serializers.CharField(required=False, allow_blank=True)
+    notice_period = serializers.CharField(required=False, allow_blank=True)
+    interested_roles = serializers.CharField(required=False, allow_blank=True)
+    industry_preference = serializers.CharField(required=False, allow_blank=True)
+    dream_companies = serializers.CharField(required=False, allow_blank=True)
+    reason_for_job_change = serializers.CharField(required=False, allow_blank=True)
+    important_criteria = serializers.CharField(required=False, allow_blank=True)
+    linkedin_profile = serializers.URLField(required=False, allow_blank=True)
+    achievement = serializers.CharField(required=False, allow_blank=True)
+    profile_visible = serializers.BooleanField(required=False, default=True)
+    source = serializers.CharField(required=False, allow_blank=True)
+    referral_name = serializers.CharField(required=False, allow_blank=True)
+
