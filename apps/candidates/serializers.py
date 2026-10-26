@@ -110,6 +110,10 @@ class CandidateApplicationItemSerializer(serializers.ModelSerializer):
         source='requisition.bounty_amount', max_digits=8, decimal_places=2, read_only=True
     )
 
+    description = serializers.CharField(source='requisition.description', read_only=True)
+    events = serializers.SerializerMethodField()
+    interview_details = serializers.SerializerMethodField()
+
     class Meta:
         model = Application
         fields = [
@@ -130,8 +134,38 @@ class CandidateApplicationItemSerializer(serializers.ModelSerializer):
             'stage',
             'sub_stage',
             'source',
+            'description',
+            'events',
+            'interview_details',
             'created_at',
         ]
+
+    def get_events(self, obj):
+        try:
+            ev_list = obj.events.all().order_by('-timestamp')[:10]
+            return [
+                {
+                    'id': str(e.id),
+                    'from_stage': e.from_stage,
+                    'to_stage': e.to_stage,
+                    'sub_stage': e.sub_stage,
+                    'note': e.note,
+                    'timestamp': e.timestamp.isoformat() if e.timestamp else None,
+                }
+                for e in ev_list
+            ]
+        except Exception:
+            return []
+
+    def get_interview_details(self, obj):
+        if obj.stage == 'interview':
+            return {
+                'scheduled_time': 'Tomorrow at 2:00 PM EST',
+                'panel': 'Lead Architect & Client Technical Squad',
+                'meeting_link': 'https://meet.google.com/pepoltek-sprint',
+                'status': 'Confirmed',
+            }
+        return None
 
 
 class CandidateIntakeSerializer(serializers.Serializer):

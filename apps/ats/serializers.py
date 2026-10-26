@@ -1,5 +1,14 @@
 from rest_framework import serializers
-from .models import Requisition, Application, ApplicationStage, ApplicationSource, Submission, DeliveryChannel
+from .models import (
+    Requisition,
+    Application,
+    ApplicationStage,
+    ApplicationSource,
+    Submission,
+    DeliveryChannel,
+    Client,
+    ClientContact,
+)
 
 
 def get_default_responsibilities(obj):
@@ -322,5 +331,64 @@ class SubmissionCreateSerializer(serializers.Serializer):
     pitch_notes = serializers.CharField(required=False, allow_blank=True, default='')
     client_name = serializers.CharField(required=False, allow_blank=True, default='Enterprise Client Partner')
     items = serializers.ListField(child=serializers.DictField(), required=True)
+
+
+class ClientContactSerializer(serializers.ModelSerializer):
+    email = serializers.CharField()
+    phone = serializers.CharField()
+
+    class Meta:
+        model = ClientContact
+        fields = ['id', 'full_name', 'email', 'phone', 'role_title', 'is_primary']
+
+
+class ClientSerializer(serializers.ModelSerializer):
+    contacts = ClientContactSerializer(many=True, read_only=True)
+    owner_name = serializers.SerializerMethodField()
+    active_requisitions_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Client
+        fields = [
+            'id',
+            'name',
+            'sector',
+            'website',
+            'terms',
+            'delivery_channel',
+            'owner',
+            'owner_name',
+            'contacts',
+            'active_requisitions_count',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_owner_name(self, obj):
+        if obj.owner:
+            return obj.owner.full_name or obj.owner.email
+        return None
+
+    def get_active_requisitions_count(self, obj):
+        return obj.requisitions.filter(status='open').count()
+
+
+class ClientCreateUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(required=True, max_length=255)
+    sector = serializers.CharField(required=False, allow_blank=True, default='technology')
+    website = serializers.URLField(required=False, allow_blank=True, default='')
+    delivery_channel = serializers.ChoiceField(choices=DeliveryChannel.choices, default=DeliveryChannel.EMAIL)
+    terms = serializers.DictField(required=False, default=dict)
+    primary_contact_name = serializers.CharField(required=False, allow_blank=True, default='')
+    primary_contact_email = serializers.EmailField(required=False, allow_blank=True, default='')
+    primary_contact_phone = serializers.CharField(required=False, allow_blank=True, default='')
+    primary_contact_role = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class RecruiterSourceCandidateSerializer(serializers.Serializer):
+    candidate_id = serializers.UUIDField(required=True)
+    requisition_id = serializers.UUIDField(required=True)
+    note = serializers.CharField(required=False, allow_blank=True, default='')
+
 
 

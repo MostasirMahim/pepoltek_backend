@@ -176,7 +176,11 @@ class CookieTokenRefreshView(TokenRefreshView):
             return Response({'error': {'code': 'INVALID_TOKEN', 'message': str(e)}}, status=status.HTTP_401_UNAUTHORIZED)
 
         access_token = serializer.validated_data.get('access')
-        response = Response({'data': {'access_token': access_token}})
+        new_refresh = serializer.validated_data.get('refresh')
+        response_data = {'access_token': access_token}
+        if new_refresh:
+            response_data['refresh_token'] = new_refresh
+        response = Response({'data': response_data})
         if access_token:
             response.set_cookie(
                 key=JWT.get('AUTH_COOKIE', 'access_token'),
@@ -185,6 +189,15 @@ class CookieTokenRefreshView(TokenRefreshView):
                 secure=JWT.get('AUTH_COOKIE_SECURE', True),
                 samesite=JWT.get('AUTH_COOKIE_SAMESITE', 'Lax'),
                 max_age=int(JWT['ACCESS_TOKEN_LIFETIME'].total_seconds()),
+            )
+        if new_refresh:
+            response.set_cookie(
+                key=JWT.get('AUTH_COOKIE_REFRESH', 'refresh_token'),
+                value=new_refresh,
+                httponly=True,
+                secure=JWT.get('AUTH_COOKIE_SECURE', True),
+                samesite=JWT.get('AUTH_COOKIE_SAMESITE', 'Lax'),
+                max_age=int(JWT['REFRESH_TOKEN_LIFETIME'].total_seconds()),
             )
         return response
 

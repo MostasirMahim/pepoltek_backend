@@ -24,3 +24,34 @@ pytest : Run all automated backend tests.
 
 # 7. Package Installation
 pip install -r requirements/base.txt : Install core project dependencies.
+
+# 8. Local Database Details
+Database Engine: SQLite3 (dev mode)
+Database Path: dev_db.sqlite3
+Total Registered Accounts: 25
+
+# 9. Test Credentials (All Roles)
+All seeded accounts use password: Password123!
+
+Admin / Super Admin:
+  Email: admin@pepoltek.com
+  Password: Password123!
+  Roles: ADMIN, SUPER_ADMIN
+  Access: /admin, /workspace/super-admin, /workspace/admin
+
+Recruiter:
+  Email: recruiter@pepoltek.com
+  Password: Password123!
+  Roles: RECRUITER
+  Access: /workspace/recruiter, /workspace/ats
+
+Candidate:
+  Email: candidate@pepoltek.com
+  Password: Password123!
+  Roles: CANDIDATE
+  Access: /candidate/dashboard, /candidate/profile
+
+Staff Roles:
+  Credential Officer: credential_officer@pepoltek.com / Password123!
+  Tech Validator: tech_validator@pepoltek.com / Password123!
+  Business Analyst: business_analyst@pepoltek.com / Password123!

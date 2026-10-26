@@ -174,11 +174,16 @@ def get_candidate_dashboard_aggregation(candidate: Candidate) -> dict:
 
     next_action = determine_next_best_action(candidate)
 
+    # Requisition fit match score (SRS 9.2 Stage 2 composite)
+    cv_score_val = candidate.cv_score or 90
+    match_score = min(98, max(75, round((dynamic_strength * 0.4) + (technical_vetting_score * 0.35) + (cv_score_val * 0.25))))
+
     return {
         'profile_strength': dynamic_strength,
-        'cv_score': candidate.cv_score or 90,
+        'cv_score': cv_score_val,
         'technical_vetting_score': technical_vetting_score,
         'readiness_tier': candidate.readiness_tier,
+        'match_score': match_score,
         'open_to_work': candidate.open_to_work,
         'active_applications_count': active_apps_count,
         'total_applications_count': total_apps_count,

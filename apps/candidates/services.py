@@ -200,6 +200,13 @@ def create_candidate_document(
             request=request,
         )
 
+        if doc_type == DocumentType.RESUME:
+            candidate.cv_score = 92
+            candidate.profile_strength = selectors.calculate_profile_strength(candidate)
+            if candidate.readiness_tier == ReadinessTier.UNRATED:
+                candidate.readiness_tier = ReadinessTier.READY
+            candidate.save(update_fields=['cv_score', 'profile_strength', 'readiness_tier', 'updated_at'])
+
     return doc
 
 

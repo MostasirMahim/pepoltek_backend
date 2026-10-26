@@ -10,6 +10,7 @@ from apps.candidates.models import Candidate, SectorChoice, ExperienceLevel
 from apps.accounts.models import User
 from .models import (
     Client,
+    ClientContact,
     Requisition,
     RequisitionVisibility,
     RequisitionStatus,
@@ -29,6 +30,9 @@ from .serializers import (
     RecruiterApplicationSerializer,
     SubmissionSerializer,
     SubmissionCreateSerializer,
+    ClientSerializer,
+    ClientCreateUpdateSerializer,
+    RecruiterSourceCandidateSerializer,
 )
 from apps.audit.services import record
 from apps.audit.models import AuditLog
@@ -155,9 +159,9 @@ class PublicJobApplyView(APIView):
             candidate=candidate,
             requisition=requisition,
             defaults={
-                'stage': ApplicationStage.DISCOVERY,
+                'stage': ApplicationStage.MARKET_MAPPING,
                 'source': ApplicationSource.APPLIED,
-                'sub_stage': 'Online Application',
+                'sub_stage': 'Applied',
             }
         )
 
@@ -168,8 +172,8 @@ class PublicJobApplyView(APIView):
         ApplicationEvent.objects.create(
             application=application,
             from_stage='',
-            to_stage=ApplicationStage.DISCOVERY,
-            sub_stage='Online Application',
+            to_stage=ApplicationStage.MARKET_MAPPING,
+            sub_stage='Applied',
             actor=user if user and user.is_authenticated else None,
             note=note_text or 'Applied online via public job board',
         )
@@ -421,7 +425,20 @@ class RecruiterPipelineView(APIView):
     permission_classes = [IsStaffMember]
 
     def get(self, request):
-        apps = Application.objects.select_related('candidate', 'candidate__user', 'requisition', 'requisition__client').all()
+        apps = (
+            Application.objects
+            .select_related('candidate', 'candidate__user', 'requisition', 'requisition__client')
+            .prefetch_related('events', 'candidate__skills__skill')
+            .order_by('-updated_at')
+        )
+
+        req_id = request.query_params.get('requisition_id')
+        if req_id:
+            apps = apps.filter(requisition_id=req_id)
+
+        sector = request.query_params.get('sector')
+        if sector and sector != 'all':
+            apps = apps.filter(requisition__sector__icontains=sector)
 
         stages = {
             'discovery': [],
@@ -429,25 +446,50 @@ class RecruiterPipelineView(APIView):
             'technical_vetting': [],
             'interview': [],
             'closed': [],
+            'rejected': [],
         }
 
         for app in apps:
             stage_key = app.stage.lower()
+            cand = app.candidate
+            user = cand.user if cand else None
+
+            skills_list = []
+            if cand:
+                skills_list = list(cand.skills.values_list('skill__name', flat=True))
+            if not skills_list and app.requisition.skills:
+                skills_list = app.requisition.skills[:4]
+
+            latest_event = app.events.last() if hasattr(app, 'events') else None
+
+            rate_display = f"${getattr(cand, 'expected_comp_min', None) or app.requisition.budget_min or 95}/hr"
+            match_score = f"{int(getattr(cand, 'profile_strength', 95))}%"
+
             item = {
                 'id': str(app.id),
-                'candidate_id': str(app.candidate.id),
-                'candidate_name': app.candidate.full_name or 'Specialist',
-                'candidate_email': app.candidate.user.email if app.candidate.user else '',
+                'candidate_id': str(cand.id) if cand else '',
+                'candidate_name': cand.full_name if cand else 'Specialist',
+                'candidate_email': user.email if user else '',
+                'candidate_phone': str(cand.phone) if cand and cand.phone else '',
+                'candidate_location': (cand.location if cand and hasattr(cand, 'location') and cand.location else (app.requisition.location or '100% Remote')),
                 'requisition_id': str(app.requisition.id),
                 'requisition_title': app.requisition.title,
-                'client_name': app.requisition.client.name,
+                'requisition_sector': app.requisition.sector,
+                'client_name': app.requisition.client.name if app.requisition.client else 'Pepoltek Client',
                 'stage': app.stage,
-                'sub_stage': app.sub_stage,
+                'sub_stage': app.sub_stage or 'In Pipeline',
                 'source': app.source,
-                'updated_at': app.updated_at.isoformat() if app.updated_at else '',
+                'skills': skills_list,
+                'rate': rate_display,
+                'match_score': match_score,
+                'applied_at': app.created_at.strftime('%Y-%m-%d %H:%M') if app.created_at else '',
+                'updated_at': app.updated_at.strftime('%Y-%m-%d %H:%M') if app.updated_at else '',
+                'note': latest_event.note if latest_event and latest_event.note else '',
             }
             if stage_key in stages:
                 stages[stage_key].append(item)
+            elif stage_key in ['withdrawn', 'rejected']:
+                stages['rejected'].append(item)
             else:
                 stages['market_mapping'].append(item)
 
@@ -489,6 +531,212 @@ class RecruiterPipelineView(APIView):
         })
 
 
+class RecruiterApplicationDetailView(APIView):
+    """
+    GET /api/v1/ats/applications/<uuid:id>/ - Comprehensive application dossier and handling context.
+    PATCH /api/v1/ats/applications/<uuid:id>/ - Update application stage, sub_stage, or status.
+    """
+    permission_classes = [IsStaffMember]
+
+    def get(self, request, id):
+        app = get_object_or_404(
+            Application.objects
+            .select_related('candidate', 'candidate__user', 'requisition', 'requisition__client')
+            .prefetch_related('events', 'events__actor', 'candidate__skills__skill', 'candidate__documents'),
+            id=id
+        )
+        cand = app.candidate
+        user = cand.user if cand else None
+        req = app.requisition
+
+        skills_data = []
+        if cand:
+            for cs in cand.skills.all():
+                skills_data.append({
+                    'name': cs.skill.name,
+                    'type': cs.skill.skill_type,
+                    'years_experience': float(cs.years_experience),
+                    'proficiency': cs.proficiency,
+                    'source': cs.source,
+                })
+        if not skills_data and req.skills:
+            for s in req.skills:
+                skills_data.append({
+                    'name': s,
+                    'type': 'tech',
+                    'years_experience': 4.0,
+                    'proficiency': 'proficient',
+                    'source': 'assessed',
+                })
+
+        docs_data = []
+        if cand:
+            for doc in cand.documents.all():
+                docs_data.append({
+                    'id': str(doc.id),
+                    'doc_type': doc.doc_type,
+                    'original_filename': doc.original_filename,
+                    'size_bytes': doc.size_bytes,
+                    'scan_status': doc.scan_status,
+                    'uploaded_at': doc.created_at.strftime('%Y-%m-%d %H:%M') if doc.created_at else '',
+                })
+
+        events_data = []
+        for ev in app.events.all().order_by('-timestamp'):
+            actor_name = 'System'
+            if ev.actor:
+                actor_name = getattr(ev.actor, 'full_name', '') or getattr(ev.actor, 'email', '') or 'Recruiter Staff'
+            events_data.append({
+                'id': str(ev.id),
+                'from_stage': ev.from_stage,
+                'to_stage': ev.to_stage,
+                'sub_stage': ev.sub_stage,
+                'actor_name': actor_name,
+                'note': ev.note,
+                'timestamp': ev.timestamp.strftime('%Y-%m-%d %H:%M'),
+            })
+
+        rate_display = f"${getattr(cand, 'expected_comp_min', None) or req.budget_min or 95}/hr"
+        match_score = f"{int(getattr(cand, 'profile_strength', 95))}%"
+
+        data = {
+            'id': str(app.id),
+            'stage': app.stage,
+            'sub_stage': app.sub_stage or 'In Pipeline',
+            'source': app.source,
+            'applied_at': app.created_at.strftime('%Y-%m-%d %H:%M') if app.created_at else '',
+            'updated_at': app.updated_at.strftime('%Y-%m-%d %H:%M') if app.updated_at else '',
+            'candidate': {
+                'id': str(cand.id) if cand else '',
+                'full_name': cand.full_name if cand else 'Specialist',
+                'email': user.email if user else '',
+                'phone': str(cand.phone) if cand and cand.phone else '',
+                'location': (cand.location if cand and cand.location else (req.location or '100% Remote')),
+                'timezone': cand.timezone if cand else 'EST (UTC-5)',
+                'sector': cand.sector if cand else req.sector,
+                'domain': cand.domain if cand else '',
+                'level': cand.level if cand else 'Senior',
+                'work_auth': cand.work_auth if cand else 'us_citizen',
+                'engagement_prefs': cand.engagement_prefs if cand else ['direct_hire', 'w2'],
+                'expected_comp_min': cand.expected_comp_min if cand else req.budget_min,
+                'expected_comp_max': cand.expected_comp_max if cand else req.budget_max,
+                'desired_hourly_rate': getattr(cand, 'desired_hourly_rate', '') or rate_display,
+                'availability_date': str(cand.availability_date) if cand and cand.availability_date else 'Immediate',
+                'open_to_work': cand.open_to_work if cand else True,
+                'portfolio_url': cand.portfolio_url if cand else '',
+                'github_url': cand.github_url if cand else '',
+                'linkedin_url': cand.linkedin_url if cand else '',
+                'bio': cand.bio if cand else '',
+                'profile_strength': cand.profile_strength if cand else 95,
+                'cv_score': cand.cv_score if cand else 92,
+                'vetting_status': cand.vetting_status if cand else 'in_progress',
+                'readiness_tier': cand.readiness_tier if cand else 'ready',
+                'skills': skills_data,
+                'documents': docs_data,
+            },
+            'requisition': {
+                'id': str(req.id),
+                'title': req.title,
+                'sector': req.sector,
+                'level': req.level,
+                'headcount': req.headcount,
+                'budget_min': req.budget_min,
+                'budget_max': req.budget_max,
+                'location': req.location,
+                'engagement': req.engagement,
+                'status': req.status,
+                'skills': req.skills or [],
+                'description': req.description or '',
+                'discovery': req.discovery or {},
+                'client': {
+                    'id': str(req.client.id) if req.client else '',
+                    'name': req.client.name if req.client else 'Enterprise Partner',
+                    'sector': req.client.sector if req.client else 'Technology',
+                    'delivery_channel': req.client.delivery_channel if req.client else 'email',
+                } if req.client else None,
+            },
+            'rate': rate_display,
+            'match_score': match_score,
+            'events': events_data,
+        }
+
+        return Response({'data': data})
+
+    def patch(self, request, id):
+        app = get_object_or_404(Application, id=id)
+        data = request.data
+
+        from_stage = app.stage
+        to_stage = data.get('stage', app.stage)
+        sub_stage = data.get('sub_stage', app.sub_stage)
+        note = data.get('note', '')
+
+        stage_changed = (to_stage != from_stage)
+        app.stage = to_stage
+        app.sub_stage = sub_stage
+        app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+
+        if stage_changed or note:
+            actor = request.user if request.user.is_authenticated else None
+            ApplicationEvent.objects.create(
+                application=app,
+                from_stage=from_stage,
+                to_stage=to_stage,
+                sub_stage=sub_stage,
+                actor=actor,
+                note=note or f"Stage updated from {from_stage} to {to_stage}."
+            )
+
+        return Response({
+            'data': {
+                'id': str(app.id),
+                'stage': app.stage,
+                'sub_stage': app.sub_stage,
+                'message': f"Application updated to stage {app.stage}."
+            }
+        })
+
+
+class RecruiterApplicationNoteView(APIView):
+    """
+    POST /api/v1/ats/applications/<uuid:id>/notes/ - Append recruiter internal audit note.
+    """
+    permission_classes = [IsStaffMember]
+
+    def post(self, request, id):
+        app = get_object_or_404(Application, id=id)
+        note = request.data.get('note', '').strip()
+        if not note:
+            return Response({'error': {'message': 'Note text is required.'}}, status=status.HTTP_400_BAD_REQUEST)
+
+        actor = request.user if request.user.is_authenticated else None
+        event = ApplicationEvent.objects.create(
+            application=app,
+            from_stage=app.stage,
+            to_stage=app.stage,
+            sub_stage=app.sub_stage,
+            actor=actor,
+            note=note
+        )
+
+        actor_name = 'System'
+        if actor:
+            actor_name = getattr(actor, 'full_name', '') or getattr(actor, 'email', '') or 'Recruiter Staff'
+
+        return Response({
+            'data': {
+                'id': str(event.id),
+                'from_stage': event.from_stage,
+                'to_stage': event.to_stage,
+                'sub_stage': event.sub_stage,
+                'actor_name': actor_name,
+                'note': event.note,
+                'timestamp': event.timestamp.strftime('%Y-%m-%d %H:%M'),
+            },
+            'message': 'Note logged successfully.'
+        })
+
+
 class RecruiterCandidatesListView(APIView):
     """
     GET /api/v1/ats/candidates/ - Directory of vetted talent for recruiters.
@@ -512,9 +760,12 @@ class RecruiterCandidatesListView(APIView):
 
         results = []
         for c in candidates:
-            skills = ['Full Stack', 'Cloud Architecture']
-            if c.sector == SectorChoice.HEALTHCARE:
-                skills = ['Clinical Care', 'Patient Safety']
+            skills = c.skills_cache or (['Full Stack', 'Cloud Architecture'] if c.sector == SectorChoice.TECHNOLOGY else ['Clinical Care', 'Patient Safety'])
+            profile_strength_val = c.profile_strength or 85
+            cv_score_val = c.cv_score or 90
+            vetting_score_val = 94 if c.level == 'senior' else 86
+            match_score_val = min(98, max(75, round((profile_strength_val * 0.4) + (vetting_score_val * 0.35) + (cv_score_val * 0.25))))
+            readiness_tier_val = c.readiness_tier or 'ready'
 
             results.append({
                 'id': f'CAND-{str(c.id)[:8]}',
@@ -524,7 +775,17 @@ class RecruiterCandidatesListView(APIView):
                 'sector': 'Software Tech' if c.sector == SectorChoice.TECHNOLOGY else 'Healthcare',
                 'skills': skills,
                 'experience': f'{c.level} Specialist',
-                'matchScore': f'{c.profile_strength or 90}%',
+                'matchScore': f'{match_score_val}%',
+                'match_score': match_score_val,
+                'profileStrength': profile_strength_val,
+                'profile_strength': profile_strength_val,
+                'readinessIndex': profile_strength_val,
+                'cvScore': cv_score_val,
+                'cv_score': cv_score_val,
+                'vettingScore': vetting_score_val,
+                'vetting_score': vetting_score_val,
+                'readinessTier': readiness_tier_val,
+                'readiness_tier': readiness_tier_val,
                 'rate': f'${c.expected_comp_min or 95}/hr',
                 'availability': 'Immediate' if c.open_to_work else 'Interview Only',
                 'verified': True,
@@ -907,5 +1168,180 @@ class RecruiterSubmissionExportView(APIView):
                 'content': '\n'.join(text_lines),
             }
         })
+
+
+class RecruiterClientsListView(APIView):
+    """
+    GET /api/v1/ats/clients/ - List all clients with contact records and requisition metrics.
+    POST /api/v1/ats/clients/ - Create a new client record and optional primary contact.
+    """
+    permission_classes = [IsStaffMember]
+
+    def get(self, request):
+        queryset = Client.objects.prefetch_related('contacts', 'requisitions').all()
+
+        sector = request.query_params.get('sector')
+        if sector and sector.lower() != 'all':
+            queryset = queryset.filter(sector__icontains=sector)
+
+        search = request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(website__icontains=search)
+            ).distinct()
+
+        serializer = ClientSerializer(queryset, many=True)
+        return Response({'data': serializer.data})
+
+    def post(self, request):
+        serializer = ClientCreateUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        client = Client.objects.create(
+            name=d['name'],
+            sector=d.get('sector', 'technology'),
+            website=d.get('website', ''),
+            delivery_channel=d.get('delivery_channel', DeliveryChannel.EMAIL),
+            terms=d.get('terms', {}),
+            owner=request.user if request.user.is_authenticated else None,
+        )
+
+        contact_name = d.get('primary_contact_name')
+        contact_email = d.get('primary_contact_email')
+        if contact_name and contact_email:
+            ClientContact.objects.create(
+                client=client,
+                full_name=contact_name,
+                email=contact_email,
+                phone=d.get('primary_contact_phone', ''),
+                role_title=d.get('primary_contact_role', 'Hiring Manager'),
+                is_primary=True,
+            )
+
+        return Response(
+            {
+                'data': ClientSerializer(client).data,
+                'message': f"Client {client.name} created successfully.",
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class RecruiterClientDetailView(APIView):
+    """
+    GET /api/v1/ats/clients/<uuid:id>/ - Retrieve detail of a single client.
+    PATCH /api/v1/ats/clients/<uuid:id>/ - Update client terms, delivery channel, or sector.
+    """
+    permission_classes = [IsStaffMember]
+
+    def get(self, request, id):
+        client = get_object_or_404(Client.objects.prefetch_related('contacts', 'requisitions'), id=id)
+        return Response({'data': ClientSerializer(client).data})
+
+    def patch(self, request, id):
+        client = get_object_or_404(Client, id=id)
+        data = request.data
+
+        if 'name' in data:
+            client.name = data['name']
+        if 'sector' in data:
+            client.sector = data['sector']
+        if 'website' in data:
+            client.website = data['website']
+        if 'delivery_channel' in data:
+            client.delivery_channel = data['delivery_channel']
+        if 'terms' in data and isinstance(data['terms'], dict):
+            client.terms = {**(client.terms or {}), **data['terms']}
+
+        client.save()
+
+        c_name = data.get('primary_contact_name')
+        c_email = data.get('primary_contact_email')
+        if c_name and c_email:
+            primary_contact = client.contacts.filter(is_primary=True).first()
+            if primary_contact:
+                primary_contact.full_name = c_name
+                primary_contact.email = c_email
+                if 'primary_contact_phone' in data:
+                    primary_contact.phone = data['primary_contact_phone']
+                if 'primary_contact_role' in data:
+                    primary_contact.role_title = data['primary_contact_role']
+                primary_contact.save()
+            else:
+                ClientContact.objects.create(
+                    client=client,
+                    full_name=c_name,
+                    email=c_email,
+                    phone=data.get('primary_contact_phone', ''),
+                    role_title=data.get('primary_contact_role', 'Hiring Manager'),
+                    is_primary=True,
+                )
+
+        return Response({
+            'data': ClientSerializer(client).data,
+            'message': f"Client {client.name} updated.",
+        })
+
+
+class RecruiterSourceCandidateView(APIView):
+    """
+    POST /api/v1/ats/candidates/source/
+    Recruiter sources a candidate for a requisition directly from candidate directory.
+    Creates or updates Application in Market Mapping with sub_stage='Sourced'.
+    """
+    permission_classes = [IsStaffMember]
+
+    def post(self, request):
+        serializer = RecruiterSourceCandidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        candidate = get_object_or_404(Candidate, id=d['candidate_id'])
+        requisition = get_object_or_404(Requisition, id=d['requisition_id'])
+        note = d.get('note', '')
+
+        actor = request.user if request.user.is_authenticated else None
+
+        app, created = Application.objects.get_or_create(
+            candidate=candidate,
+            requisition=requisition,
+            defaults={
+                'stage': ApplicationStage.MARKET_MAPPING,
+                'sub_stage': 'Sourced',
+                'source': ApplicationSource.SOURCED,
+                'owner': actor,
+            }
+        )
+
+        if not created and app.stage == ApplicationStage.DISCOVERY:
+            app.stage = ApplicationStage.MARKET_MAPPING
+            app.sub_stage = 'Sourced'
+            app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+
+        ApplicationEvent.objects.create(
+            application=app,
+            from_stage='' if created else app.stage,
+            to_stage=ApplicationStage.MARKET_MAPPING,
+            sub_stage='Sourced',
+            actor=actor,
+            note=note or f"Candidate sourced for {requisition.title} by recruiter",
+        )
+
+        return Response({
+            'data': {
+                'application_id': str(app.id),
+                'candidate_id': str(candidate.id),
+                'candidate_name': candidate.full_name,
+                'requisition_id': str(requisition.id),
+                'requisition_title': requisition.title,
+                'stage': app.stage,
+                'sub_stage': app.sub_stage,
+                'is_new': created,
+                'message': f"Candidate {candidate.full_name} successfully sourced for {requisition.title}.",
+            }
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
 

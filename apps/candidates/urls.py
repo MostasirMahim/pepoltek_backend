@@ -9,8 +9,10 @@ from .views import (
     CandidateExportDataView,
     CandidateDeleteRequestView,
     CandidateApplicationsView,
+    CandidateInterviewsListView,
     CandidatePitchToggleView,
     CandidateIntakeView,
+    CandidateIntakeParseCVView,
 )
 
 urlpatterns = [
@@ -23,6 +25,8 @@ urlpatterns = [
     path('me/export/', CandidateExportDataView.as_view(), name='candidate-export'),
     path('me/delete-request/', CandidateDeleteRequestView.as_view(), name='candidate-delete-request'),
     path('applications/', CandidateApplicationsView.as_view(), name='candidate-applications'),
+    path('interviews/', CandidateInterviewsListView.as_view(), name='candidate-interviews'),
     path('pitch/', CandidatePitchToggleView.as_view(), name='candidate-pitch-toggle'),
     path('intake/', CandidateIntakeView.as_view(), name='candidate-intake'),
+    path('intake/parse-cv/', CandidateIntakeParseCVView.as_view(), name='candidate-intake-parse-cv'),
 ]

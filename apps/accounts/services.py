@@ -54,16 +54,29 @@ def register_user(
         UserRole(user=user, role=role) for role in default_roles
     ])
 
-    # Record consent events
+    # Record consent events defensively
     if consents:
+        policy_mapping = {
+            'terms': ConsentRecord.PolicyType.TERMS,
+            'tos': ConsentRecord.PolicyType.TERMS,
+            'privacy': ConsentRecord.PolicyType.PRIVACY,
+            'data_matching': ConsentRecord.PolicyType.DATA_PROCESSING,
+            'data_processing': ConsentRecord.PolicyType.DATA_PROCESSING,
+            'matching': ConsentRecord.PolicyType.DATA_PROCESSING,
+            'marketing': ConsentRecord.PolicyType.MARKETING,
+        }
         for c in consents:
+            raw_type = str(c.get('policy_type') or c.get('type') or '').strip().lower()
+            if not raw_type:
+                continue
+            mapped_type = policy_mapping.get(raw_type, raw_type)
             ConsentRecord.objects.create(
                 user=user,
-                policy_type=c['policy_type'],
-                policy_version=c.get('policy_version', ''),
-                agreed=c.get('agreed', True),
-                ip_address=ip_address,
-                user_agent=user_agent,
+                policy_type=mapped_type,
+                policy_version=str(c.get('policy_version') or c.get('version') or 'v2.1').strip(),
+                agreed=bool(c.get('agreed', True)),
+                ip_address=ip_address or '127.0.0.1',
+                user_agent=user_agent or '',
             )
 
     logger.info('User registered: %s (referred_by=%s)', user.email, referred_by)

@@ -16,7 +16,22 @@ INSTALLED_APPS += ['debug_toolbar', 'silk']  # noqa
 MIDDLEWARE = ['debug_toolbar.middleware.DebugToolbarMiddleware', 'silk.middleware.SilkyMiddleware'] + MIDDLEWARE  # noqa
 INTERNAL_IPS = ['127.0.0.1', 'localhost']
 TESTING = 'pytest' in sys.modules or 'test' in sys.argv
-DEBUG_TOOLBAR_CONFIG = {'SHOW_TOOLBAR_CALLBACK': lambda r: DEBUG and not TESTING}
+
+def show_toolbar(request):
+    if not DEBUG or TESTING:
+        return False
+    # Never run debug toolbar for API requests to avoid overhead and sqlparse token limit crashes on JSON/encrypted fields
+    if request.path.startswith('/api/'):
+        return False
+    return True
+
+DEBUG_TOOLBAR_CONFIG = {
+    'SHOW_TOOLBAR_CALLBACK': show_toolbar,
+    'PRETTIFY_SQL': False,
+    'ENABLE_STACKTRACES': False,
+}
+SILKY_MAX_RECORDED_REQUESTS = 500
+
 
 USE_SQLITE = env.bool('USE_SQLITE', default=True)  # Set USE_SQLITE=False in .env when local PostgreSQL is configured
 

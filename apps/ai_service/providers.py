@@ -28,6 +28,20 @@ def is_valid_key(key: Optional[str]) -> bool:
     return True
 
 
+def _create_openai_client(api_key: str, base_url: Optional[str] = None, timeout: int = 30):
+    """Safely instantiates an OpenAI client with an explicit httpx.Client to prevent proxies keyword incompatibility in httpx 0.28+."""
+    import httpx
+    import openai
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": timeout,
+        "http_client": httpx.Client(timeout=timeout),
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
+    return openai.OpenAI(**kwargs)
+
+
 class BaseAIProvider:
     name: str = "base"
 
@@ -168,9 +182,7 @@ class GroqProvider(BaseAIProvider):
         if not self.is_available():
             raise ValueError("Groq API key not configured.")
 
-        import openai
-
-        client = openai.OpenAI(
+        client = _create_openai_client(
             api_key=self.api_key,
             base_url="https://api.groq.com/openai/v1",
             timeout=timeout,
@@ -218,11 +230,9 @@ class DeepSeekProvider(BaseAIProvider):
         if not self.is_available():
             raise ValueError("DeepSeek API key not configured.")
 
-        import openai
-
-        client = openai.OpenAI(
+        client = _create_openai_client(
             api_key=self.api_key,
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             timeout=timeout,
         )
 
@@ -259,9 +269,7 @@ class QwenProvider(BaseAIProvider):
         if not self.is_available():
             raise ValueError("Qwen / DashScope API key not configured.")
 
-        import openai
-
-        client = openai.OpenAI(
+        client = _create_openai_client(
             api_key=self.api_key,
             base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             timeout=timeout,
@@ -305,9 +313,7 @@ class OpenAIProvider(BaseAIProvider):
         if not self.is_available():
             raise ValueError("OpenAI API key not configured.")
 
-        import openai
-
-        client = openai.OpenAI(api_key=self.api_key, timeout=timeout)
+        client = _create_openai_client(api_key=self.api_key, timeout=timeout)
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
