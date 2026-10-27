@@ -1,0 +1,118 @@
+================================================================================
+PEPOLTEK PLATFORM - PRODUCTION SEED & BOOTSTRAP REGISTRY
+================================================================================
+House Style Notice: Zero em dashes in all documentation, commands, and comments.
+
+This registry tracks the 4 independent, modular bootstrap commands designed for
+production environments, automated staging CI/CD, and developer setup.
+
+--------------------------------------------------------------------------------
+1. MASTER RUNNER (SEQUENTIAL ALL-IN-ONE EXECUTION)
+--------------------------------------------------------------------------------
+Command:
+  python manage.py bootstrap_all
+
+Description:
+  Executes bootstrap_auth, bootstrap_users, bootstrap_jobs, and bootstrap_cms
+  in guaranteed sequential order with unified status reporting. Idempotent and safe
+  to run repeatedly.
+
+--------------------------------------------------------------------------------
+2. INDIVIDUAL BOOTSTRAP MODULES
+--------------------------------------------------------------------------------
+
+[Module 1] Auth & RBAC Infrastructure
+  Command:
+    python manage.py bootstrap_auth
+  File:
+    apps/core/management/commands/bootstrap_auth.py
+  Seeded Components:
+    - SuperAdmin User: admin@pepoltek.com (Roles: SUPER_ADMIN, ADMIN)
+    - 9 Dynamic RoleDefinition records with system clearance levels:
+        * SUPER_ADMIN (Clearance: L4)
+        * ADMIN (Clearance: L3)
+        * RECRUITER (Clearance: L2)
+        * BUSINESS_ANALYST (Clearance: L2)
+        * TECH_VALIDATOR (Clearance: L2)
+        * CREDENTIAL_OFFICER (Clearance: L2)
+        * CLIENT_OWNER (Clearance: L1)
+        * REFERRER (Clearance: L1)
+        * CANDIDATE (Clearance: L1)
+    - Complete Choice Matrix Taxonomy Config (ConfigVersion)
+    - Referral Bounty Catalog: 4 standard bounty types (Tech Sprint, Specialist Hire, Nurse Sprint, Physician Retainer)
+
+[Module 2] Staff & Operational Accounts
+  Command:
+    python manage.py bootstrap_users
+  File:
+    apps/core/management/commands/bootstrap_users.py
+  Seeded Components:
+    - Recruiter: recruiter@pepoltek.com
+    - Business Analyst: business_analyst@pepoltek.com
+    - Tech Validator: tech_validator@pepoltek.com + ValidatorProfile (technology, L3, max 10 concurrent reviews)
+    - Credential Officer: credential_officer@pepoltek.com + ValidatorProfile (healthcare, L2, max 15 concurrent reviews)
+    - Referrer: referrer@pepoltek.com
+    - Candidate: candidate@pepoltek.com (with full Candidate model profile attached)
+
+[Module 3] ATS Clients, Candidates, Requisitions, Rubrics & Pipelines
+  Command:
+    python manage.py bootstrap_jobs
+  File:
+    apps/core/management/commands/bootstrap_jobs.py
+  Seeded Components:
+    - 2 Enterprise Clients:
+        * Apex Cloud Systems (Technology) - Contact: Evelyn Vance (VP Infrastructure)
+        * MedVanguard Health Network (Healthcare) - Contact: Dr. Alistair Finch (CMO)
+    - 2 Authentic Candidates:
+        * Sarah Connor (Tech): Senior Cloud Architect, $120/hr, AWS/K8s/Go, US Citizen
+        * Sarah Ahmed, RN (Healthcare): Lead ICU RN, $95/hr, MA Compact License, Verified
+    - 1 Verified License Credential:
+        * RN State Compact License (Primary source verified via NURSYS)
+    - 2 Assessment Templates (Vetting Rubrics):
+        * Distributed Systems & Cloud Architecture Review (Technology)
+        * Clinical Licensure & Critical Care Protocol Verification (Healthcare)
+    - 6 Published Requisitions (3 Technology, 3 Healthcare):
+        * Lead Cloud & DevOps Sprint Specialist (Apex Cloud Systems)
+        * Principal Distributed Systems Architect (Apex Cloud Systems)
+        * Senior Full-Stack TypeScript Engineer (Apex Cloud Systems)
+        * Intensive Care Unit (ICU) Registered Nurse (MedVanguard Health Network)
+        * Clinical Nurse Specialist & Compliance Auditor (MedVanguard Health Network)
+        * Nurse Practitioner - Family & Emergency Care (MedVanguard Health Network)
+    - 2 Connected Pipelines with Real Pitch Authorizations:
+        * Pipeline 1: Sarah Connor -> Lead Cloud & DevOps Sprint Specialist
+          Stage: Market Mapping | Pitch Authorized (Candidate consent on file)
+        * Pipeline 2: Sarah Ahmed, RN -> Intensive Care Unit (ICU) Registered Nurse
+          Stage: Technical Vetting | Pitch Authorized | ApplicationVetting assigned to Credential Officer
+
+[Module 4] Headless CMS & Public Site Content
+  Command:
+    python manage.py bootstrap_cms
+  File:
+    apps/core/management/commands/bootstrap_cms.py
+  Seeded Components:
+    - Master Site Navigation (site_navigation): Dynamic 4-group mega-menu with badges and serial sorting
+    - Master Homepage (homepage + homepage_hero): All 9 visual frontend sections populated
+    - Services Collection (services_list and services): 6 delivery models
+    - Case Studies Collection (case_studies and case-studies): 3 production blueprints
+    - Healthcare Collection (healthcare_page and healthcare): Regulated clinical tracks and compliance SLAs
+    - About Page (about_page): Mission, 4 operational pillars, and company standards
+    - Contact Info (contact_info): Headquarter addresses, support email, and emergency lines
+    - Footer Content (footer_content): 4 navigation columns, copyright, and legal disclaimers
+    - CTA Banners (cta_banners): Homepage discovery banner and talent network callouts
+
+--------------------------------------------------------------------------------
+3. DEFAULT AUTHENTICATION CREDENTIALS MATRIX
+--------------------------------------------------------------------------------
+All bootstrap accounts share the standard development and staging password:
+Password: Password123!
+
+Account Matrix:
+  Super Admin:        admin@pepoltek.com              Password123!
+  Recruiter:          recruiter@pepoltek.com          Password123!
+  Business Analyst:   business_analyst@pepoltek.com   Password123!
+  Tech Validator:     tech_validator@pepoltek.com     Password123!
+  Credential Officer: credential_officer@pepoltek.com Password123!
+  Referrer:           referrer@pepoltek.com           Password123!
+  Candidate Test:     candidate@pepoltek.com          Password123!
+  Candidate (Tech):   sarah.connor@pepoltek.com       Password123!
+  Candidate (Health): sarah.ahmed.rn@example.com      Password123!

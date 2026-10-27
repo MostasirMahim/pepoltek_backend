@@ -4,6 +4,8 @@ API endpoints for Refer & Earn network, candidate referrals, Admin Escrow & Payo
 and the BountyType admin catalog CRUD.
 """
 from decimal import Decimal
+from django.utils import timezone
+from django.db.models import Sum
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -30,7 +32,7 @@ from .services import (
     create_bounty_type,
     update_bounty_type,
 )
-from .models import BountyType
+from .models import BountyType, LedgerEntry, PayoutStatus
 
 
 class AdminLedgerSummaryView(APIView):
@@ -547,3 +549,43 @@ def _bounty_type_to_dict(bt: BountyType) -> dict:
         'sort_order': bt.sort_order,
         'created_at': bt.created_at.isoformat() if bt.created_at else None,
     }
+
+
+class ReferralPayoutRequestView(APIView):
+    """
+    POST /api/v1/referrals/request-payout/
+    Submit a payout disbursement request for approved referral ledger balances.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        payout_method = request.data.get('payout_method', 'bank_wire')
+        recipient_details = request.data.get('recipient_details', '').strip()
+        user = request.user
+
+        approved_entries = LedgerEntry.objects.filter(
+            user=user,
+            status=PayoutStatus.APPROVED
+        )
+        total_available = approved_entries.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        if total_available <= Decimal('0.00'):
+            return Response(
+                {'error': {'code': 'INSUFFICIENT_FUNDS', 'message': 'No approved escrow balances available for disbursement.'}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        note_text = f"Payout requested via {payout_method}. Recipient details: {recipient_details}"
+        for entry in approved_entries:
+            entry.note = f"{entry.note}\n[{timezone.now().strftime('%Y-%m-%d %H:%M')}] {note_text}".strip()
+            entry.save(update_fields=['note'])
+
+        return Response({
+            'data': {
+                'requested_amount_usd': float(total_available),
+                'entries_count': approved_entries.count(),
+                'payout_method': payout_method,
+                'message': f"Disbursement request for ${total_available:,.2f} USD submitted to the Treasury desk.",
+            }
+        }, status=status.HTTP_200_OK)
+

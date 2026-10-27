@@ -13,7 +13,7 @@ from .models import (
     ReadinessTier,
 )
 from apps.ats.models import Application, ApplicationStage, Requisition, RequisitionStatus
-from apps.vetting.models import Credential, Assessment
+from apps.vetting.models import Credential, VettingScore
 
 
 def get_candidate_for_user(user) -> Candidate:
@@ -127,9 +127,11 @@ def get_candidate_dashboard_aggregation(candidate: Candidate) -> dict:
         candidate.profile_strength = dynamic_strength
         candidate.save(update_fields=['profile_strength', 'updated_at'])
 
-    # Assessments score calculation
-    assessments_qs = Assessment.objects.filter(candidate=candidate)
-    avg_assessment = assessments_qs.aggregate(avg=Avg('score'))['avg']
+    # Vetting score calculation -- use final scores from primary validator
+    vetting_scores_qs = VettingScore.objects.filter(
+        vetting__application__candidate=candidate
+    )
+    avg_assessment = vetting_scores_qs.aggregate(avg=Avg('score'))['avg']
     technical_vetting_score = round(avg_assessment) if avg_assessment is not None else candidate.cv_score or 85
 
     # Pipeline counts

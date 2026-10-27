@@ -19,9 +19,16 @@ def get_active_taxonomies() -> Dict[str, Any]:
     ).first()
 
     if active and isinstance(active.data, dict) and active.data.get("sectors"):
+        data = dict(active.data)
+        if "assessmentCategories" not in data:
+            data["assessmentCategories"] = DEFAULT_TAXONOMY_DATA.get("assessmentCategories", [])
+        if "validator_specializations" not in data and "validatorSpecializations" not in data:
+            data["validatorSpecializations"] = DEFAULT_TAXONOMY_DATA.get("validator_specializations", [])
+        if "interviewFormats" not in data and "interview_formats" not in data:
+            data["interviewFormats"] = DEFAULT_TAXONOMY_DATA.get("interviewFormats", [])
         return {
             "version": active.version,
-            "data": active.data,
+            "data": data,
             "published_at": active.created_at.isoformat(),
             "author": active.author.email if active.author else "System Defaults",
             "notes": active.notes,
@@ -59,6 +66,7 @@ def get_taxonomy_history(limit: int = 15) -> List[Dict[str, Any]]:
                 "seniorities": len(v.data.get("seniorities", [])),
                 "workAuths": len(v.data.get("workAuths", [])),
                 "engagements": len(v.data.get("engagements", [])),
+                "assessmentCategories": len(v.data.get("assessmentCategories", [])),
             } if isinstance(v.data, dict) else {},
         })
     return history

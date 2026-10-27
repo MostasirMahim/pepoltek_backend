@@ -6,6 +6,7 @@ No client logins in MVP - clients are internal entities managed by Pepoltek staf
 """
 from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator, MaxValueValidator
 from apps.core.models import BaseModel
 from encrypted_model_fields.fields import EncryptedCharField, EncryptedEmailField
 
@@ -110,7 +111,7 @@ class Requisition(BaseModel):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name='owned_requisitions'
     )
-    # embedding = VectorField(dimensions=1536, null=True)  # Phase 2 - pgvector
+    embedding = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = 'ats_requisition'
@@ -122,6 +123,36 @@ class Requisition(BaseModel):
 
     def __str__(self):
         return f'{self.title} ({self.client.name})'
+
+    def generate_embedding_vector(self) -> list[float]:
+        try:
+            from apps.ai_service.services import generate_candidate_embedding
+            text_parts = [
+                f"Title: {self.title}",
+                f"Sector: {self.sector}",
+                f"Level: {self.level}",
+                f"Skills: {', '.join(self.skills) if isinstance(self.skills, list) else ''}",
+                f"Engagement: {self.engagement}",
+                f"Location: {self.location}",
+                f"Description: {self.description[:1000]}",
+            ]
+            if isinstance(self.discovery, dict):
+                reqs = self.discovery.get('requirements', [])
+                if reqs:
+                    text_parts.append(f"Requirements: {', '.join(reqs) if isinstance(reqs, list) else str(reqs)}")
+            full_text = " ".join(text_parts)
+            return generate_candidate_embedding(full_text)
+        except Exception:
+            return [0.0] * 1536
+
+    def save(self, *args, **kwargs):
+        if not self.embedding:
+            try:
+                self.embedding = self.generate_embedding_vector()
+            except Exception:
+                pass
+        super().save(*args, **kwargs)
+
 
 
 class ApplicationStage(models.TextChoices):
@@ -212,3 +243,134 @@ class Placement(BaseModel):
 
     class Meta:
         db_table = 'ats_placement'
+
+
+class InterviewType(models.TextChoices):
+    TECHNICAL_CODING = 'technical_coding', 'Technical Coding'
+    SYSTEM_DESIGN = 'system_design', 'System Design'
+    CLINICAL_BOARD = 'clinical_board', 'Clinical Board'
+    BEHAVIORAL_LEADERSHIP = 'behavioral_leadership', 'Behavioral & Leadership'
+    CLIENT_FINAL = 'client_final', 'Client Final Round'
+
+
+class InterviewStatus(models.TextChoices):
+    SCHEDULED = 'scheduled', 'Scheduled'
+    CONFIRMED = 'confirmed', 'Confirmed'
+    IN_PROGRESS = 'in_progress', 'In Progress'
+    COMPLETED = 'completed', 'Completed'
+    RESCHEDULED = 'rescheduled', 'Rescheduled'
+    CANCELLED = 'cancelled', 'Cancelled'
+    NO_SHOW = 'no_show', 'No Show'
+
+
+class PanelRole(models.TextChoices):
+    LEAD_INTERVIEWER = 'lead_interviewer', 'Lead Interviewer'
+    TECHNICAL_ASSESSOR = 'technical_assessor', 'Technical Assessor'
+    CLINICAL_VALIDATOR = 'clinical_validator', 'Clinical Validator'
+    CLIENT_OBSERVER = 'client_observer', 'Client Observer'
+
+
+class RecommendationChoice(models.TextChoices):
+    STRONG_HIRE = 'strong_hire', 'Strong Hire'
+    HIRE = 'hire', 'Hire'
+    NEUTRAL = 'neutral', 'Neutral'
+    DO_NOT_HIRE = 'do_not_hire', 'Do Not Hire'
+
+
+class Interview(BaseModel):
+    """
+    RPO Technical and Client Interview session.
+    Belongs to an Application in the ATS pipeline.
+    """
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name='interviews'
+    )
+    title = models.CharField(max_length=255)
+    interview_type = models.CharField(
+        max_length=60, choices=InterviewType.choices, default=InterviewType.TECHNICAL_CODING
+    )
+    round_number = models.PositiveSmallIntegerField(default=1)
+    scheduled_start = models.DateTimeField()
+    scheduled_end = models.DateTimeField()
+    timezone = models.CharField(max_length=50, default='UTC')
+    meeting_link = models.URLField(max_length=500, blank=True)
+    status = models.CharField(
+        max_length=25, choices=InterviewStatus.choices, default=InterviewStatus.SCHEDULED
+    )
+    lead_interviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='led_interviews'
+    )
+    panel_members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, through='InterviewPanelAssignment', related_name='panel_interviews', blank=True
+    )
+    candidate_notes = models.TextField(blank=True)
+    internal_brief = models.TextField(blank=True)
+    reminder_24h_dispatched = models.BooleanField(default=False)
+    reminder_24h_dispatched_at = models.DateTimeField(null=True, blank=True)
+    reminder_1h_dispatched = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'ats_interview'
+        ordering = ['scheduled_start']
+        indexes = [
+            models.Index(fields=['status', 'scheduled_start']),
+            models.Index(fields=['reminder_24h_dispatched', 'scheduled_start']),
+        ]
+
+    def __str__(self):
+        return f'{self.title} ({self.application.candidate}) - {self.status}'
+
+
+class InterviewPanelAssignment(BaseModel):
+    """
+    Associates staff users with an interview and records their role and confirmation.
+    """
+    interview = models.ForeignKey(
+        Interview, on_delete=models.CASCADE, related_name='assignments'
+    )
+    staff_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='interview_assignments'
+    )
+    role = models.CharField(
+        max_length=30, choices=PanelRole.choices, default=PanelRole.TECHNICAL_ASSESSOR
+    )
+    has_confirmed = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'ats_interview_panel_assignment'
+        unique_together = [('interview', 'staff_user')]
+
+    def __str__(self):
+        user_display = self.staff_user.get_full_name() or self.staff_user.email
+        return f'{user_display} -> {self.interview.title} ({self.role})'
+
+
+class InterviewEvaluation(BaseModel):
+    """
+    Formal scorecard submitted by an interview panelist.
+    """
+    interview = models.ForeignKey(
+        Interview, on_delete=models.CASCADE, related_name='evaluations'
+    )
+    evaluator = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='submitted_evaluations'
+    )
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    recommendation = models.CharField(
+        max_length=20, choices=RecommendationChoice.choices
+    )
+    competency_scores = models.JSONField(default=list, blank=True)
+    feedback = models.TextField()
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ats_interview_evaluation'
+        unique_together = [('interview', 'evaluator')]
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f'Evaluation for {self.interview.title} by {self.evaluator.email}: {self.score} ({self.recommendation})'
+

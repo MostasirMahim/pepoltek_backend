@@ -113,6 +113,8 @@ class CandidateApplicationItemSerializer(serializers.ModelSerializer):
     description = serializers.CharField(source='requisition.description', read_only=True)
     events = serializers.SerializerMethodField()
     interview_details = serializers.SerializerMethodField()
+    pitch_status = serializers.SerializerMethodField()
+    pitch_authorized = serializers.SerializerMethodField()
 
     class Meta:
         model = Application
@@ -137,8 +139,30 @@ class CandidateApplicationItemSerializer(serializers.ModelSerializer):
             'description',
             'events',
             'interview_details',
+            'pitch_status',
+            'pitch_authorized',
             'created_at',
         ]
+
+    def get_pitch_status(self, obj):
+        try:
+            from apps.matching.models import PitchAuthorization
+            pa = PitchAuthorization.objects.filter(candidate=obj.candidate, requisition=obj.requisition).first()
+            if pa:
+                return pa.status
+            return 'authorized' if obj.sub_stage == 'Pitch Authorized' else 'requested'
+        except Exception:
+            return 'requested'
+
+    def get_pitch_authorized(self, obj):
+        try:
+            from apps.matching.models import PitchAuthorization, PitchAuthorizationStatus
+            pa = PitchAuthorization.objects.filter(candidate=obj.candidate, requisition=obj.requisition).first()
+            if pa:
+                return pa.status == PitchAuthorizationStatus.AUTHORIZED
+            return obj.sub_stage == 'Pitch Authorized'
+        except Exception:
+            return False
 
     def get_events(self, obj):
         try:

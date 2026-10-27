@@ -22,6 +22,34 @@ class AIStatusView(APIView):
         return Response(report, status=status.HTTP_200_OK)
 
 
+from apps.accounts.permissions import IsStaffMember
+from .search import search_candidates_ai
+
+
+class AICandidateSearchView(APIView):
+    """
+    POST /api/v1/ai/candidate-search/
+    Recruiter natural-language semantic candidate search powered by DeepSeek AI API.
+    Converts query into structured filter chips, computes vector cosine match scores,
+    and returns ranked candidate records with explainability factors.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        query = request.data.get("query", "").strip()
+        sector = request.data.get("sector")
+        requisition_id = request.data.get("requisition_id")
+        if not query:
+            return Response({"error": "Search query is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = search_candidates_ai(
+            query=query,
+            sector=sector,
+            requisition_id=requisition_id,
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class AINLSearchView(APIView):
     """
     POST /api/v1/ai/nl-search/

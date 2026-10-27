@@ -1,5 +1,53 @@
 from rest_framework import serializers
-from .models import Lead, LeadSource, LeadStatus, SectorChoice
+from django.contrib.auth import get_user_model
+from .models import (
+    Lead,
+    LeadActivityLog,
+    ContactInquiry,
+    LeadSource,
+    LeadStatus,
+    SectorChoice,
+    TimelineChoice,
+    ContactCategory,
+    ContactStatus,
+)
+
+User = get_user_model()
+
+
+class UserSummarySerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'full_name']
+
+    def get_full_name(self, obj):
+        name = getattr(obj, 'full_name', '') or getattr(obj, 'email', '')
+        return name or 'Staff Member'
+
+
+class LeadActivityLogSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LeadActivityLog
+        fields = [
+            'id',
+            'actor',
+            'actor_name',
+            'action',
+            'from_status',
+            'to_status',
+            'note',
+            'created_at',
+        ]
+
+    def get_actor_name(self, obj):
+        if not obj.actor:
+            return 'System'
+        name = getattr(obj.actor, 'full_name', '') or getattr(obj.actor, 'email', '')
+        return name or 'Staff Member'
 
 
 class LeadCreateSerializer(serializers.ModelSerializer):
@@ -22,6 +70,9 @@ class LeadCreateSerializer(serializers.ModelSerializer):
             'roles_needed',
             'headcount',
             'engagement_model',
+            'timeline',
+            'estimated_budget',
+            'preferred_delivery_channel',
             'start_date',
             'notes',
             'calculator_snapshot',
@@ -86,3 +137,159 @@ class LeadCreateSerializer(serializers.ModelSerializer):
 class LeadBookingSerializer(serializers.Serializer):
     slot = serializers.CharField(required=True)
     notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class LeadListSerializer(serializers.ModelSerializer):
+    owner_details = UserSummarySerializer(source='owner', read_only=True)
+
+    class Meta:
+        model = Lead
+        fields = [
+            'id',
+            'company',
+            'contact_name',
+            'work_email',
+            'phone',
+            'source',
+            'status',
+            'sector',
+            'headcount',
+            'engagement_model',
+            'timeline',
+            'estimated_budget',
+            'preferred_delivery_channel',
+            'owner',
+            'owner_details',
+            'booking_data',
+            'created_at',
+            'converted_at',
+        ]
+
+
+class LeadDetailSerializer(serializers.ModelSerializer):
+    owner_details = UserSummarySerializer(source='owner', read_only=True)
+    activity_logs = LeadActivityLogSerializer(many=True, read_only=True)
+    converted_client_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Lead
+        fields = [
+            'id',
+            'company',
+            'contact_name',
+            'work_email',
+            'phone',
+            'source',
+            'status',
+            'sector',
+            'roles_needed',
+            'headcount',
+            'engagement_model',
+            'timeline',
+            'estimated_budget',
+            'preferred_delivery_channel',
+            'start_date',
+            'notes',
+            'calculator_snapshot',
+            'booking_data',
+            'owner',
+            'owner_details',
+            'converted_client',
+            'converted_client_details',
+            'converted_at',
+            'created_at',
+            'updated_at',
+            'activity_logs',
+        ]
+
+    def get_converted_client_details(self, obj):
+        if not obj.converted_client:
+            return None
+        return {
+            'id': str(obj.converted_client.id),
+            'name': obj.converted_client.name,
+            'sector': obj.converted_client.sector,
+        }
+
+
+class LeadStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=LeadStatus.choices, required=False)
+    owner_id = serializers.UUIDField(required=False, allow_null=True)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
+class LeadNoteCreateSerializer(serializers.Serializer):
+    note = serializers.CharField(required=True, allow_blank=False)
+
+
+class LeadConvertSerializer(serializers.Serializer):
+    client_name = serializers.CharField(required=False, allow_blank=True)
+    requisition_title = serializers.CharField(required=False, allow_blank=True)
+    sector = serializers.CharField(required=False, allow_blank=True)
+    headcount = serializers.IntegerField(required=False, min_value=1)
+    delivery_channel = serializers.CharField(required=False, allow_blank=True)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
+class ContactInquiryCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactInquiry
+        fields = [
+            'id',
+            'name',
+            'email',
+            'phone',
+            'category',
+            'subject',
+            'message',
+            'created_at',
+        ]
+
+
+class ContactInquiryListSerializer(serializers.ModelSerializer):
+    responder_details = UserSummarySerializer(source='responder', read_only=True)
+
+    class Meta:
+        model = ContactInquiry
+        fields = [
+            'id',
+            'name',
+            'email',
+            'phone',
+            'category',
+            'subject',
+            'status',
+            'responder',
+            'responder_details',
+            'responded_at',
+            'created_at',
+        ]
+
+
+class ContactInquiryDetailSerializer(serializers.ModelSerializer):
+    responder_details = UserSummarySerializer(source='responder', read_only=True)
+
+    class Meta:
+        model = ContactInquiry
+        fields = [
+            'id',
+            'name',
+            'email',
+            'phone',
+            'category',
+            'subject',
+            'message',
+            'status',
+            'responder',
+            'responder_details',
+            'response_notes',
+            'responded_at',
+            'created_at',
+            'updated_at',
+        ]
+
+
+class ContactInquiryUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=ContactStatus.choices, required=False)
+    response_notes = serializers.CharField(required=False, allow_blank=True)
+    responder_id = serializers.UUIDField(required=False, allow_null=True)

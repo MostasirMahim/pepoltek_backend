@@ -3,6 +3,7 @@ from .views import (
     ReferralSummaryView,
     ReferralTrackView,
     DirectReferralSubmitView,
+    ReferralPayoutRequestView,
     AdminLedgerSummaryView,
     AdminApprovePayoutView,
     AdminDisbursePayoutView,
@@ -21,6 +22,7 @@ urlpatterns = [
     path('summary/', ReferralSummaryView.as_view(), name='referral-summary'),
     path('submit/', DirectReferralSubmitView.as_view(), name='referral-submit'),
     path('track/<str:code>/', ReferralTrackView.as_view(), name='referral-track'),
+    path('request-payout/', ReferralPayoutRequestView.as_view(), name='referral-request-payout'),
 
     # Recruiter Referral Pipeline endpoints
     path('recruiter/', RecruiterReferralsPipelineView.as_view(), name='recruiter-referrals-pipeline'),

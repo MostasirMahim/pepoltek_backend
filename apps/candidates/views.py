@@ -41,7 +41,7 @@ from .serializers import (
 )
 from . import selectors
 from . import services
-from apps.ats.models import Application, ApplicationStage, ApplicationEvent
+from apps.ats.models import Application, ApplicationStage, ApplicationEvent, Interview
 
 User = get_user_model()
 
@@ -618,38 +618,47 @@ class CandidateInterviewsListView(APIView):
         if not candidate:
             return Response({'data': []})
 
-        interview_apps = Application.objects.filter(
-            candidate=candidate,
-            stage=ApplicationStage.INTERVIEW
-        ).select_related('requisition', 'requisition__client')
+        interviews = Interview.objects.filter(
+            application__candidate=candidate
+        ).select_related(
+            'application__requisition__client',
+            'lead_interviewer'
+        ).prefetch_related(
+            'assignments__staff_user'
+        ).order_by('scheduled_start')
 
         results = []
-        for idx, app in enumerate(interview_apps):
-            latest_event = ApplicationEvent.objects.filter(application=app).order_by('-timestamp').first()
-            meeting_link = "https://meet.google.com/pepoltek-sprint"
-            panel = "Lead Architect & Client Technical Squad"
-            scheduled_time = "Tomorrow at 2:00 PM EST"
-
-            if latest_event and latest_event.note:
-                for part in latest_event.note.split():
-                    if part.startswith("http://") or part.startswith("https://"):
-                        meeting_link = part
+        for interview in interviews:
+            app = interview.application
+            panel_names = []
+            if interview.lead_interviewer:
+                panel_names.append(f"{interview.lead_interviewer.get_full_name() or interview.lead_interviewer.email} (Lead)")
+            for assign in interview.assignments.all():
+                if assign.staff_user != interview.lead_interviewer:
+                    panel_names.append(assign.staff_user.get_full_name() or assign.staff_user.email)
 
             results.append({
-                'id': f"INT-2026-{str(idx + 1).zfill(3)}",
+                'id': str(interview.id),
                 'application_id': str(app.id),
+                'title': interview.title,
                 'role': app.requisition.title,
-                'client_name': app.requisition.client.name if app.requisition.client else "Enterprise Workspace Partner",
+                'client_name': app.requisition.client.name if app.requisition.client else "Pepoltek Client Partner",
                 'sector': app.requisition.sector,
                 'location': app.requisition.location or "100% Remote",
-                'type': "Client Technical Panel & System Design",
-                'panel': panel,
-                'time': scheduled_time,
-                'meeting_link': meeting_link,
-                'status': "Confirmed",
+                'type': interview.get_interview_type_display(),
+                'round_number': interview.round_number,
+                'panel': ", ".join(panel_names) if panel_names else "Assigned Technical Panel",
+                'time': interview.scheduled_start.strftime('%a, %b %d, %Y at %I:%M %p %Z'),
+                'scheduled_start': interview.scheduled_start.isoformat(),
+                'scheduled_end': interview.scheduled_end.isoformat(),
+                'meeting_link': interview.meeting_link,
+                'status': interview.get_status_display(),
+                'raw_status': interview.status,
                 'stage': app.stage,
                 'sub_stage': app.sub_stage or "Interview Scheduled",
+                'candidate_notes': interview.candidate_notes,
             })
 
         return Response({'data': results})
+
 

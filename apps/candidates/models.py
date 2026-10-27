@@ -101,9 +101,8 @@ class Candidate(BaseModel):
         max_length=20, choices=ReadinessTier.choices, default=ReadinessTier.UNRATED
     )
 
-    # pgvector embedding (populated by matching.tasks.embed_candidate)
-    # VectorField added after pgvector migration in Phase 2
-    # embedding = VectorField(dimensions=1536, null=True, blank=True)
+    # pgvector embedding vector (float array generated via apps.ai_service.services.generate_candidate_embedding)
+    embedding = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = 'candidates_candidate'
@@ -116,6 +115,35 @@ class Candidate(BaseModel):
 
     def __str__(self):
         return f'{self.full_name} ({self.sector} / {self.level})'
+
+    def generate_embedding_vector(self) -> list[float]:
+        try:
+            from apps.ai_service.services import generate_candidate_embedding
+            # Strips protected attributes (age, gender, nationality, religion) per Technical SRS 9.2
+            skills_list = self.skills_cache if isinstance(self.skills_cache, list) else []
+            text_parts = [
+                f"Domain: {self.domain}",
+                f"Sector: {self.sector}",
+                f"Level: {self.level}",
+                f"Skills: {', '.join(skills_list)}",
+                f"Bio: {self.bio[:600]}",
+                f"Location: {self.location}",
+                f"WorkAuth: {self.work_auth}",
+                f"Engagement: {', '.join(self.engagement_prefs) if isinstance(self.engagement_prefs, list) else str(self.engagement_prefs)}",
+            ]
+            full_text = " ".join(text_parts)
+            return generate_candidate_embedding(full_text)
+        except Exception:
+            return [0.0] * 1536
+
+    def save(self, *args, **kwargs):
+        if not self.embedding:
+            try:
+                self.embedding = self.generate_embedding_vector()
+            except Exception:
+                pass
+        super().save(*args, **kwargs)
+
 
 
 class SkillTaxonomy(BaseModel):

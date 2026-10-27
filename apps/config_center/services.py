@@ -72,6 +72,9 @@ def update_taxonomies(taxonomy_data: dict, author, notes: str = '') -> ConfigVer
         if k not in taxonomy_data or not isinstance(taxonomy_data[k], list):
             raise ValueError(f"Taxonomy data must include a list for '{k}'.")
 
+    if 'assessmentCategories' in taxonomy_data and not isinstance(taxonomy_data['assessmentCategories'], list):
+        raise ValueError("Taxonomy data must include a list for 'assessmentCategories' if provided.")
+
     return publish_config(
         key=ConfigVersion.Key.SKILL_TAXONOMY,
         data=taxonomy_data,

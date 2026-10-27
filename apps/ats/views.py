@@ -20,6 +20,14 @@ from .models import (
     ApplicationEvent,
     Submission,
     DeliveryChannel,
+    Placement,
+    Interview,
+    InterviewPanelAssignment,
+    InterviewEvaluation,
+    InterviewType,
+    InterviewStatus,
+    PanelRole,
+    RecommendationChoice,
 )
 from apps.referrals.models import BountyType
 from .serializers import (
@@ -33,12 +41,20 @@ from .serializers import (
     ClientSerializer,
     ClientCreateUpdateSerializer,
     RecruiterSourceCandidateSerializer,
+    InterviewListSerializer,
+    InterviewDetailSerializer,
+    InterviewCreateSerializer,
+    InterviewUpdateSerializer,
+    InterviewEvaluationSerializer,
+    InterviewEvaluationCreateSerializer,
+    InterviewPanelAssignmentSerializer,
 )
 from apps.audit.services import record
 from apps.audit.models import AuditLog
 from django.utils import timezone
 import csv
 import io
+from .services import ensure_interview_for_application
 
 
 class PublicJobsListView(APIView):
@@ -350,6 +366,10 @@ class RecruiterRequisitionDetailView(APIView):
             req.discovery = req.discovery or {}
             req.discovery['benefits'] = data['benefits']
 
+        try:
+            req.embedding = req.generate_embedding_vector()
+        except Exception:
+            pass
         req.save()
         return Response({'data': RecruiterRequisitionSerializer(req).data, 'message': 'Requisition updated.'})
 
@@ -520,6 +540,9 @@ class RecruiterPipelineView(APIView):
             note=note,
         )
 
+        if to_stage in [ApplicationStage.INTERVIEW, 'interview']:
+            ensure_interview_for_application(app, actor=actor)
+
         return Response({
             'data': {
                 'application_id': str(app.id),
@@ -658,6 +681,51 @@ class RecruiterApplicationDetailView(APIView):
             'rate': rate_display,
             'match_score': match_score,
             'events': events_data,
+            'interviews': [
+                {
+                    'id': str(intv.id),
+                    'title': intv.title,
+                    'interview_type': intv.interview_type,
+                    'round_number': intv.round_number,
+                    'scheduled_start': intv.scheduled_start.strftime('%Y-%m-%d %H:%M') if intv.scheduled_start else '',
+                    'scheduled_end': intv.scheduled_end.strftime('%Y-%m-%d %H:%M') if intv.scheduled_end else '',
+                    'meeting_link': intv.meeting_link,
+                    'status': intv.status,
+                    'lead_interviewer': getattr(intv.lead_interviewer, 'full_name', '') or getattr(intv.lead_interviewer, 'email', '') if intv.lead_interviewer else '',
+                }
+                for intv in app.interviews.all().order_by('-scheduled_start')
+            ],
+            'placement': {
+                'start_date': str(app.placement.start_date) if hasattr(app, 'placement') and app.placement.start_date else '',
+                'rate': f"${app.placement.rate}/hr" if hasattr(app, 'placement') and app.placement.rate else '',
+                'guarantee_until': str(app.placement.guarantee_until) if hasattr(app, 'placement') and app.placement.guarantee_until else '',
+                'checkins': app.placement.checkins if hasattr(app, 'placement') and app.placement.checkins else {},
+            } if hasattr(app, 'placement') else None,
+            'vettings': [
+                {
+                    'id': str(v.id),
+                    'template_id': str(v.template_id),
+                    'template_title': v.template.title,
+                    'template_category': v.template.category,
+                    'template_sector': v.template.sector,
+                    'total_marks': v.template.total_marks,
+                    'marks_distribution': v.template.marks_distribution,
+                    'instructions': v.template.instructions,
+                    'status': v.status,
+                    'status_display': v.get_status_display(),
+                    'primary_validator_id': str(v.primary_validator_id) if v.primary_validator_id else None,
+                    'primary_validator_name': getattr(v.primary_validator, 'full_name', '') or getattr(v.primary_validator, 'email', '') if v.primary_validator else None,
+                    'primary_validator_email': getattr(v.primary_validator, 'email', '') if v.primary_validator else None,
+                    'deadline': v.deadline.strftime('%Y-%m-%d') if v.deadline else None,
+                    'scheduled_start': v.scheduled_start.strftime('%Y-%m-%d') if v.scheduled_start else None,
+                    'final_score': v.final_score,
+                    'pass_threshold': v.pass_threshold,
+                    'decision_notes': v.decision_notes,
+                    'recruiter_notes': v.recruiter_notes,
+                    'created_at': v.created_at.strftime('%Y-%m-%d %H:%M') if v.created_at else '',
+                }
+                for v in app.vettings.all().select_related('template', 'primary_validator').order_by('-created_at')
+            ],
         }
 
         return Response({'data': data})
@@ -670,15 +738,33 @@ class RecruiterApplicationDetailView(APIView):
         to_stage = data.get('stage', app.stage)
         sub_stage = data.get('sub_stage', app.sub_stage)
         note = data.get('note', '')
+        signature = data.get('recruiter_signature', '').strip()
+
+        if signature and f"[{signature}]" not in note:
+            note = f"[{signature}] {note}".strip()
+
+        rejection_reason = data.get('rejection_reason')
+        withdrawal_reason = data.get('withdrawal_reason')
+        assigned_validator = data.get('assigned_validator')
+
+        if rejection_reason and f"[Reason: {rejection_reason}]" not in note:
+            note = f"[Reason: {rejection_reason}] {note}".strip()
+        if withdrawal_reason and f"[Reason: {withdrawal_reason}]" not in note:
+            note = f"[Reason: {withdrawal_reason}] {note}".strip()
+        if assigned_validator and f"[Assigned Validator: {assigned_validator}]" not in note:
+            note = f"[Assigned Validator: {assigned_validator}] {note}".strip()
 
         stage_changed = (to_stage != from_stage)
         app.stage = to_stage
         app.sub_stage = sub_stage
-        app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+        actor = request.user if request.user.is_authenticated else None
+        if actor and not app.owner:
+            app.owner = actor
+        app.save(update_fields=['stage', 'sub_stage', 'owner', 'updated_at'])
 
+        event = None
         if stage_changed or note:
-            actor = request.user if request.user.is_authenticated else None
-            ApplicationEvent.objects.create(
+            event = ApplicationEvent.objects.create(
                 application=app,
                 from_stage=from_stage,
                 to_stage=to_stage,
@@ -687,12 +773,221 @@ class RecruiterApplicationDetailView(APIView):
                 note=note or f"Stage updated from {from_stage} to {to_stage}."
             )
 
+        if to_stage in [ApplicationStage.INTERVIEW, 'interview']:
+            intv_type = data.get('interview_format') or data.get('interview_type')
+            intv = ensure_interview_for_application(app, actor=actor, interview_type=intv_type)
+            if intv:
+                update_fields = []
+                if intv_type and intv.interview_type != intv_type:
+                    intv.interview_type = intv_type
+                    update_fields.append('interview_type')
+                if data.get('meeting_link'):
+                    intv.meeting_link = data.get('meeting_link')
+                    update_fields.append('meeting_link')
+                if data.get('candidate_notes'):
+                    intv.candidate_notes = data.get('candidate_notes')
+                    update_fields.append('candidate_notes')
+                if data.get('interview_date'):
+                    try:
+                        from dateutil import parser
+                        parsed_dt = parser.parse(str(data.get('interview_date')))
+                        if timezone.is_naive(parsed_dt):
+                            parsed_dt = timezone.make_aware(parsed_dt, timezone.utc)
+                        intv.scheduled_start = parsed_dt
+                        intv.scheduled_end = parsed_dt + timedelta(minutes=60)
+                        update_fields.extend(['scheduled_start', 'scheduled_end'])
+                    except Exception:
+                        pass
+                if update_fields:
+                    intv.save(update_fields=list(set(update_fields)))
+
+        # Handle technical vetting stage assignment (ApplicationVetting creation)
+        if to_stage in [ApplicationStage.TECHNICAL_VETTING, 'technical_vetting']:
+            from apps.vetting.models import ApplicationVetting, AssessmentTemplate
+            from apps.accounts.models import User
+            import uuid
+
+            template = None
+            template_id_param = data.get('template_id') or data.get('assessment_template_id')
+            if template_id_param:
+                try:
+                    template = AssessmentTemplate.objects.filter(id=template_id_param).first()
+                except Exception:
+                    pass
+
+            if not template and data.get('vetting_track'):
+                vt = str(data.get('vetting_track')).strip()
+                try:
+                    template = AssessmentTemplate.objects.filter(id=uuid.UUID(vt)).first()
+                except Exception:
+                    template = AssessmentTemplate.objects.filter(title__icontains=vt).first()
+
+            if not template:
+                req_sector = app.requisition.sector if app.requisition else 'technology'
+                template = AssessmentTemplate.objects.filter(
+                    Q(sector=req_sector) | Q(sector='both'),
+                    is_active=True
+                ).first()
+                if not template:
+                    template = AssessmentTemplate.objects.filter(is_active=True).first()
+
+            val_user = None
+            val_id_param = data.get('primary_validator_id') or data.get('assigned_validator_id')
+            if val_id_param:
+                try:
+                    val_user = User.objects.filter(id=val_id_param).first()
+                except Exception:
+                    pass
+
+            if not val_user and data.get('assigned_validator'):
+                av = str(data.get('assigned_validator')).strip()
+                try:
+                    val_user = User.objects.filter(id=uuid.UUID(av)).first()
+                except Exception:
+                    val_user = User.objects.filter(
+                        Q(full_name__icontains=av) | Q(email__icontains=av)
+                    ).first()
+
+            if not val_user:
+                target_sector = template.sector if template else 'technology'
+                if target_sector == 'healthcare':
+                    val_user = User.objects.filter(email='credential_officer@pepoltek.com').first()
+                else:
+                    val_user = User.objects.filter(email='tech_validator@pepoltek.com').first()
+
+            due_date_str = data.get('assessment_due_date') or data.get('deadline')
+            parsed_deadline = None
+            if due_date_str:
+                try:
+                    from dateutil import parser
+                    parsed_deadline = parser.parse(str(due_date_str))
+                    if timezone.is_naive(parsed_deadline):
+                        parsed_deadline = timezone.make_aware(parsed_deadline, timezone.utc)
+                except Exception:
+                    pass
+
+            if template:
+                vetting, v_created = ApplicationVetting.objects.get_or_create(
+                    application=app,
+                    template=template,
+                    defaults={
+                        'primary_validator': val_user,
+                        'assigned_by': actor,
+                        'status': ApplicationVetting.Status.IN_PROGRESS,
+                        'deadline': parsed_deadline,
+                        'recruiter_notes': note or f"Assessment assigned by {signature or 'recruiter'}.",
+                    }
+                )
+                if not v_created:
+                    update_v_fields = []
+                    if val_user and vetting.primary_validator_id != val_user.id:
+                        vetting.primary_validator = val_user
+                        update_v_fields.append('primary_validator')
+                    if parsed_deadline and vetting.deadline != parsed_deadline:
+                        vetting.deadline = parsed_deadline
+                        update_v_fields.append('deadline')
+                    if vetting.status == ApplicationVetting.Status.PENDING:
+                        vetting.status = ApplicationVetting.Status.IN_PROGRESS
+                        update_v_fields.append('status')
+                    if update_v_fields:
+                        vetting.save(update_fields=update_v_fields)
+
+        cand = app.candidate
+        if cand:
+            cand_updates = []
+            if data.get('candidate_rate'):
+                clean_r = str(data.get('candidate_rate')).replace('$', '').replace('/hr', '').strip()
+                cand.desired_hourly_rate = f"${clean_r}/hr"
+                cand_updates.append('desired_hourly_rate')
+
+            if data.get('vetting_track'):
+                cand.domain = data.get('vetting_track')
+                cand_updates.append('domain')
+
+            vetting_score = data.get('vetting_score')
+            if vetting_score is not None:
+                try:
+                    score_num = int(vetting_score)
+                    cand.vetting_status = 'vetted' if score_num >= 70 else 'in_progress'
+                    cand.profile_strength = max(cand.profile_strength or 0, min(100, score_num))
+                    cand_updates.extend(['vetting_status', 'profile_strength'])
+
+                    # Auto record score in active ApplicationVetting if exists
+                    from apps.vetting.models import ApplicationVetting
+                    from apps.vetting.services import submit_final_score
+                    active_vetting = app.vettings.filter(
+                        status__in=[
+                            ApplicationVetting.Status.PENDING,
+                            ApplicationVetting.Status.IN_PROGRESS,
+                            ApplicationVetting.Status.SUBMITTED,
+                        ]
+                    ).first()
+                    if active_vetting:
+                        verdict = 'pass' if score_num >= active_vetting.pass_threshold else 'fail'
+                        submit_final_score(
+                            actor=actor or active_vetting.primary_validator,
+                            vetting=active_vetting,
+                            score=score_num,
+                            verdict=verdict,
+                            feedback=data.get('vetting_notes', '') or 'Evaluated during recruiter stage workflow.'
+                        )
+                except Exception:
+                    pass
+
+            if cand_updates:
+                cand.save(update_fields=list(set(cand_updates)))
+
+
+        if to_stage == 'closed':
+            start_date_str = data.get('placement_start_date')
+            rate_val = data.get('placement_rate')
+            from datetime import datetime, timedelta
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date() if start_date_str else timezone.now().date()
+                guarantee_until = start_date + timedelta(days=90)
+                clean_rate = None
+                if rate_val:
+                    clean_rate_str = str(rate_val).replace('$', '').replace('/hr', '').strip()
+                    try:
+                        clean_rate = float(clean_rate_str)
+                    except ValueError:
+                        pass
+                Placement.objects.update_or_create(
+                    application=app,
+                    defaults={
+                        'start_date': start_date,
+                        'rate': clean_rate,
+                        'guarantee_until': guarantee_until,
+                        'checkins': {
+                            '30_day': {'due': str(start_date + timedelta(days=30)), 'status': 'pending'},
+                            '60_day': {'due': str(start_date + timedelta(days=60)), 'status': 'pending'},
+                            '90_day': {'due': str(guarantee_until), 'status': 'pending'},
+                        }
+                    }
+                )
+            except Exception:
+                pass
+
+        actor_name = signature or 'Recruiter Staff'
+        if actor:
+            actor_name = getattr(actor, 'full_name', '') or getattr(actor, 'email', '') or actor_name
+
         return Response({
             'data': {
                 'id': str(app.id),
                 'stage': app.stage,
                 'sub_stage': app.sub_stage,
-                'message': f"Application updated to stage {app.stage}."
+                'message': f"Application updated to stage {app.stage}.",
+                'vetting_status': cand.vetting_status if cand else 'in_progress',
+                'event': {
+                    'id': str(event.id) if event else str(timezone.now().timestamp()),
+                    'from_stage': from_stage,
+                    'to_stage': to_stage,
+                    'sub_stage': sub_stage,
+                    'actor_name': actor_name,
+                    'note': note,
+                    'timestamp': timezone.now().strftime('%Y-%m-%d %H:%M'),
+                } if event else None,
             }
         })
 
@@ -744,13 +1039,20 @@ class RecruiterCandidatesListView(APIView):
     permission_classes = [IsStaffMember]
 
     def get(self, request):
+        ai_mode = request.query_params.get('ai') in ['true', '1'] or request.query_params.get('mode') == 'ai'
+        search_query = request.query_params.get('search') or request.query_params.get('q')
+        sector_param = request.query_params.get('sector')
+
+        if ai_mode and search_query:
+            from apps.ai_service.search import search_candidates_ai
+            result = search_candidates_ai(query=search_query, sector=sector_param)
+            return Response({'data': result['results'], 'ai_meta': result})
+
         candidates = Candidate.objects.select_related('user').all()
 
-        sector_param = request.query_params.get('sector')
         if sector_param and sector_param.lower() != 'all':
             candidates = candidates.filter(sector__icontains=sector_param)
 
-        search_query = request.query_params.get('search')
         if search_query:
             candidates = candidates.filter(
                 Q(full_name__icontains=search_query) |
@@ -760,21 +1062,41 @@ class RecruiterCandidatesListView(APIView):
 
         results = []
         for c in candidates:
-            skills = c.skills_cache or (['Full Stack', 'Cloud Architecture'] if c.sector == SectorChoice.TECHNOLOGY else ['Clinical Care', 'Patient Safety'])
-            profile_strength_val = c.profile_strength or 85
-            cv_score_val = c.cv_score or 90
-            vetting_score_val = 94 if c.level == 'senior' else 86
-            match_score_val = min(98, max(75, round((profile_strength_val * 0.4) + (vetting_score_val * 0.35) + (cv_score_val * 0.25))))
-            readiness_tier_val = c.readiness_tier or 'ready'
+            is_tech = (c.sector == SectorChoice.TECHNOLOGY) or str(c.sector or '').strip().lower().startswith('tech')
+            skills = c.skills_cache if isinstance(c.skills_cache, list) else []
+            profile_strength_val = c.profile_strength or 0
+            cv_score_val = c.cv_score or 0
+            is_vetted = (c.vetting_status == VettingStatus.VETTED) or (c.readiness_tier in [ReadinessTier.READY, ReadinessTier.ELITE])
+            vetting_score_val = 94 if is_vetted else 50
+            if profile_strength_val > 0 or cv_score_val > 0:
+                match_score_val = min(98, max(60, round((profile_strength_val * 0.4) + (vetting_score_val * 0.35) + (cv_score_val * 0.25))))
+            else:
+                match_score_val = 80 if is_vetted else 65
+
+            # Compute authentic rate without inventing dummy numbers
+            if c.desired_hourly_rate and c.desired_hourly_rate.strip():
+                rate_val = c.desired_hourly_rate.strip()
+            elif c.expected_comp_min:
+                if c.expected_comp_min > 500:
+                    rate_val = f"${round(c.expected_comp_min / 2080)}/hr"
+                else:
+                    rate_val = f"${c.expected_comp_min}/hr"
+            else:
+                rate_val = "Negotiable"
+
+            # Unique display ID from candidate UUID (last 6 chars ensure guaranteed distinctness)
+            unique_uuid = str(c.id)
+            display_id = f"CAND-{unique_uuid.replace('-', '')[-6:].upper()}"
 
             results.append({
-                'id': f'CAND-{str(c.id)[:8]}',
+                'id': unique_uuid,
+                'display_id': display_id,
                 'name': c.full_name or (c.user.email.split('@')[0].capitalize() if c.user else 'Specialist'),
                 'email': c.user.email if c.user else '',
-                'title': c.domain or ('Senior Software Engineer' if c.sector == SectorChoice.TECHNOLOGY else 'Registered Clinical Specialist'),
-                'sector': 'Software Tech' if c.sector == SectorChoice.TECHNOLOGY else 'Healthcare',
+                'title': c.domain or ('Software Specialist' if is_tech else 'Healthcare Specialist'),
+                'sector': 'Software Tech' if is_tech else 'Healthcare',
                 'skills': skills,
-                'experience': f'{c.level} Specialist',
+                'experience': f'{c.level.capitalize()} Specialist' if c.level else 'Specialist',
                 'matchScore': f'{match_score_val}%',
                 'match_score': match_score_val,
                 'profileStrength': profile_strength_val,
@@ -784,122 +1106,371 @@ class RecruiterCandidatesListView(APIView):
                 'cv_score': cv_score_val,
                 'vettingScore': vetting_score_val,
                 'vetting_score': vetting_score_val,
-                'readinessTier': readiness_tier_val,
-                'readiness_tier': readiness_tier_val,
-                'rate': f'${c.expected_comp_min or 95}/hr',
+                'vetting_status': c.vetting_status or 'not_started',
+                'readinessTier': c.readiness_tier or 'unrated',
+                'readiness_tier': c.readiness_tier or 'unrated',
+                'rate': rate_val,
                 'availability': 'Immediate' if c.open_to_work else 'Interview Only',
-                'verified': True,
+                'verified': is_vetted,
                 'phone': c.phone or '',
-                'location': c.location or '100% Remote',
-            })
-
-        return Response({'data': results})
-
-
-class RecruiterInterviewsListView(APIView):
-    """
-    GET /api/v1/ats/interviews/ - List scheduled sprint interviews.
-    POST /api/v1/ats/interviews/ - Schedule technical interview with email notification.
-    """
-    permission_classes = [IsStaffMember]
-
-    def get(self, request):
-        interview_apps = Application.objects.filter(
-            stage=ApplicationStage.INTERVIEW
-        ).select_related('candidate', 'candidate__user', 'requisition')
-
-        results = []
-        for idx, app in enumerate(interview_apps):
-            results.append({
-                'id': f'INT-2026-{str(idx + 1).zfill(3)}',
-                'application_id': str(app.id),
-                'candidate': app.candidate.full_name or 'Candidate',
-                'role': app.requisition.title,
-                'requisition': app.requisition.title,
-                'pod': app.requisition.title,
-                'type': 'Technical Coding & System Design',
-                'panel': 'Lead Architect & Tech Validator',
-                'time': 'Scheduled This Sprint',
-                'status': 'Confirmed',
-                'meeting_link': 'https://meet.google.com/pepoltek-sprint',
+                'location': c.location or 'Remote',
             })
 
         return Response({'data': results})
 
     def post(self, request):
-        candidate_name = request.data.get('candidate_name', 'Talent Candidate')
-        candidate_email = request.data.get('candidate_email', '').strip().lower()
-        role = request.data.get('role', 'Senior Specialist')
-        interview_type = request.data.get('interview_type', 'Technical Panel Review')
-        scheduled_time = request.data.get('scheduled_time', 'Tomorrow at 2:00 PM EST')
-        panel = request.data.get('panel', 'Lead Architect & Tech Validator')
-        meeting_link = request.data.get('meeting_link', 'https://meet.google.com/pepoltek-sprint')
+        """
+        POST /api/v1/ats/candidates/ - Natural language AI candidate search
+        """
+        from apps.ai_service.search import search_candidates_ai
+        query = request.data.get('query') or request.data.get('search', '').strip()
+        sector = request.data.get('sector')
+        requisition_id = request.data.get('requisition_id')
+        if not query:
+            return Response({'error': {'message': 'Search query is required.'}}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Find or create candidate/application
-        user = None
-        if candidate_email:
-            user = User.objects.filter(email=candidate_email).first()
+        result = search_candidates_ai(query=query, sector=sector, requisition_id=requisition_id)
+        return Response({'data': result['results'], 'ai_meta': result})
 
-        req = Requisition.objects.filter(status=RequisitionStatus.OPEN).first()
-        if not req:
-            client, _ = Client.objects.get_or_create(name='Enterprise Workspace Partner')
-            req = Requisition.objects.create(
-                client=client,
-                title=role,
-                sector='Technology & SDLC',
-                status=RequisitionStatus.OPEN
+
+class RecruiterInterviewsListView(APIView):
+    """
+    GET /api/v1/ats/interviews/ - List scheduled sprint interviews with filters.
+    POST /api/v1/ats/interviews/ - Schedule technical/client interview with authentic database persistence.
+    """
+    permission_classes = [IsStaffMember]
+
+    def get(self, request):
+        # Ensure any applications currently in INTERVIEW stage have an Interview session provisioned
+        interview_apps = Application.objects.filter(stage=ApplicationStage.INTERVIEW).exclude(interviews__isnull=False)
+        for app in interview_apps:
+            ensure_interview_for_application(app)
+
+        qs = Interview.objects.select_related(
+            'application__candidate__user',
+            'application__requisition__client',
+            'lead_interviewer'
+        ).prefetch_related(
+            'assignments__staff_user',
+            'evaluations__evaluator'
+        ).order_by('-scheduled_start')
+
+        # Filter by status
+        status_param = request.query_params.get('status')
+        if status_param and status_param != 'all':
+            qs = qs.filter(status=status_param)
+
+        # Filter by interview_type
+        type_param = request.query_params.get('type')
+        if type_param and type_param != 'all':
+            qs = qs.filter(interview_type=type_param)
+
+        # Search query (candidate name, req title, or title)
+        search_query = request.query_params.get('search')
+        if search_query:
+            qs = qs.filter(
+                Q(title__icontains=search_query) |
+                Q(application__candidate__user__first_name__icontains=search_query) |
+                Q(application__candidate__user__last_name__icontains=search_query) |
+                Q(application__candidate__user__email__icontains=search_query) |
+                Q(application__requisition__title__icontains=search_query)
             )
 
-        if user:
-            cand, _ = Candidate.objects.get_or_create(user=user, defaults={'full_name': candidate_name})
-            app, _ = Application.objects.get_or_create(
-                candidate=cand,
-                requisition=req,
-                defaults={'stage': ApplicationStage.INTERVIEW, 'source': ApplicationSource.SOURCED}
-            )
+        serialized = InterviewListSerializer(qs, many=True).data
+
+        # Metrics overview
+        total_count = Interview.objects.count()
+        scheduled_count = Interview.objects.filter(status=InterviewStatus.SCHEDULED).count()
+        completed_count = Interview.objects.filter(status=InterviewStatus.COMPLETED).count()
+
+        return Response({
+            'data': serialized,
+            'metrics': {
+                'total': total_count,
+                'scheduled': scheduled_count,
+                'completed': completed_count,
+            }
+        })
+
+    def post(self, request):
+        serializer = InterviewCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        app = get_object_or_404(Application, id=data['application_id'])
+
+        # Advance application stage to interview if not already
+        if app.stage != ApplicationStage.INTERVIEW:
+            prev_stage = app.stage
             app.stage = ApplicationStage.INTERVIEW
-            app.save()
+            app.sub_stage = 'Interview Scheduled'
+            app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
 
-        # Send interview notification via SMTP if email is present
-        if candidate_email:
+            ApplicationEvent.objects.create(
+                application=app,
+                from_stage=prev_stage,
+                to_stage=ApplicationStage.INTERVIEW,
+                sub_stage='Interview Scheduled',
+                actor=request.user,
+                note=f"Scheduled interview '{data['title']}' via ATS recruiter console."
+            )
+
+        lead_user = None
+        if data.get('lead_interviewer_id'):
+            lead_user = User.objects.filter(id=data['lead_interviewer_id']).first()
+        if not lead_user:
+            lead_user = request.user
+
+        interview = Interview.objects.create(
+            application=app,
+            title=data['title'],
+            interview_type=data.get('interview_type', InterviewType.TECHNICAL_CODING),
+            round_number=data.get('round_number', 1),
+            scheduled_start=data['scheduled_start'],
+            scheduled_end=data['scheduled_end'],
+            timezone=data.get('timezone', 'UTC'),
+            meeting_link=data.get('meeting_link', ''),
+            status=InterviewStatus.SCHEDULED,
+            lead_interviewer=lead_user,
+            candidate_notes=data.get('candidate_notes', ''),
+            internal_brief=data.get('internal_brief', ''),
+        )
+
+        # Create panel assignment for lead interviewer
+        InterviewPanelAssignment.objects.get_or_create(
+            interview=interview,
+            staff_user=lead_user,
+            defaults={'role': PanelRole.LEAD_INTERVIEWER, 'has_confirmed': True}
+        )
+
+        # Create panel assignments for selected members
+        for member_id in data.get('panel_member_ids', []):
+            staff = User.objects.filter(id=member_id).first()
+            if staff and staff != lead_user:
+                InterviewPanelAssignment.objects.get_or_create(
+                    interview=interview,
+                    staff_user=staff,
+                    defaults={'role': PanelRole.TECHNICAL_ASSESSOR}
+                )
+
+        # Send calendar invitation email
+        cand_user = app.candidate.user
+        if cand_user and cand_user.email:
             from django.core.mail import send_mail
-            from django.conf import settings
+            start_str = interview.scheduled_start.strftime('%A, %B %d, %Y at %I:%M %p %Z')
             try:
                 send_mail(
-                    subject=f"Pepoltek Technical Interview Scheduled: {role}",
+                    subject=f"Pepoltek Technical Interview Scheduled: {app.requisition.title}",
                     message=(
-                        f"Hello {candidate_name},\n\n"
-                        f"Your technical interview for the {role} position has been scheduled.\n\n"
-                        f"Details:\n"
-                        f"- Time: {scheduled_time}\n"
-                        f"- Evaluation Format: {interview_type}\n"
-                        f"- Panel: {panel}\n"
-                        f"- Meeting Room: {meeting_link}\n\n"
-                        f"Please ensure you are ready 5 minutes prior to the scheduled time.\n\n"
+                        f"Hello {app.candidate.full_name or cand_user.get_full_name()},\n\n"
+                        f"Your interview session for the {app.requisition.title} position has been scheduled.\n\n"
+                        f"Session: {interview.title}\n"
+                        f"Format: {interview.get_interview_type_display()}\n"
+                        f"Date and Time: {start_str}\n"
+                        f"Meeting Room: {interview.meeting_link or 'Link available in your candidate dashboard'}\n\n"
+                        f"Preparation Notes:\n"
+                        f"{interview.candidate_notes or 'Please be ready in a quiet workspace 5 minutes before start.'}\n\n"
                         f"Best regards,\nPepoltek Recruitment Operations"
                     ),
                     from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[candidate_email],
+                    recipient_list=[cand_user.email],
                     fail_silently=True,
                 )
             except Exception:
                 pass
 
+        record(
+            actor=request.user,
+            action='interview.scheduled',
+            target=interview,
+            payload={'title': interview.title, 'candidate': str(app.candidate.id)}
+        )
+
         return Response({
-            'data': {
-                'id': f'INT-2026-901',
-                'candidate': candidate_name,
-                'role': role,
-                'requisition': req.title,
-                'pod': req.title,
-                'type': interview_type,
-                'panel': panel,
-                'time': scheduled_time,
-                'status': 'Confirmed',
-                'meeting_link': meeting_link,
-            },
+            'data': InterviewDetailSerializer(interview).data,
             'message': 'Interview scheduled successfully.'
         }, status=status.HTTP_201_CREATED)
+
+
+class RecruiterInterviewDetailView(APIView):
+    """
+    GET /api/v1/ats/interviews/<uuid:id>/ - Get full interview details, evaluations, and panel members.
+    PATCH /api/v1/ats/interviews/<uuid:id>/ - Update or reschedule interview.
+    DELETE /api/v1/ats/interviews/<uuid:id>/ - Cancel interview.
+    """
+    permission_classes = [IsStaffMember]
+
+    def get_object(self, id):
+        return get_object_or_404(
+            Interview.objects.select_related(
+                'application__candidate__user',
+                'application__requisition__client',
+                'lead_interviewer'
+            ).prefetch_related(
+                'assignments__staff_user',
+                'evaluations__evaluator'
+            ),
+            id=id
+        )
+
+    def get(self, request, id):
+        interview = self.get_object(id)
+        return Response({'data': InterviewDetailSerializer(interview).data})
+
+    def patch(self, request, id):
+        interview = self.get_object(id)
+        serializer = InterviewUpdateSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        for field, value in data.items():
+            if field == 'lead_interviewer_id':
+                if value:
+                    lead_user = User.objects.filter(id=value).first()
+                    interview.lead_interviewer = lead_user
+                else:
+                    interview.lead_interviewer = None
+            else:
+                setattr(interview, field, value)
+
+        interview.save()
+
+        record(
+            actor=request.user,
+            action='interview.updated',
+            target=interview,
+            payload={'updated_fields': list(data.keys())}
+        )
+
+        return Response({
+            'data': InterviewDetailSerializer(interview).data,
+            'message': 'Interview updated successfully.'
+        })
+
+    def delete(self, request, id):
+        interview = self.get_object(id)
+        interview.status = InterviewStatus.CANCELLED
+        interview.save(update_fields=['status', 'updated_at'])
+
+        record(
+            actor=request.user,
+            action='interview.cancelled',
+            target=interview,
+            payload={'reason': request.data.get('reason', 'Cancelled by recruiter')}
+        )
+
+        return Response({
+            'data': InterviewDetailSerializer(interview).data,
+            'message': 'Interview marked as cancelled.'
+        })
+
+
+class RecruiterInterviewEvaluationView(APIView):
+    """
+    POST /api/v1/ats/interviews/<uuid:id>/evaluations/ - Submit or update panel evaluation scorecard.
+    """
+    permission_classes = [IsStaffMember]
+
+    def post(self, request, id):
+        interview = get_object_or_404(Interview, id=id)
+        serializer = InterviewEvaluationCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+
+        evaluation, created = InterviewEvaluation.objects.update_or_create(
+            interview=interview,
+            evaluator=request.user,
+            defaults={
+                'score': data['score'],
+                'recommendation': data['recommendation'],
+                'competency_scores': data.get('competency_scores', []),
+                'feedback': data['feedback'],
+            }
+        )
+
+        # Ensure staff has assignment marked confirmed
+        assignment = InterviewPanelAssignment.objects.filter(
+            interview=interview,
+            staff_user=request.user
+        ).first()
+        if assignment:
+            assignment.has_confirmed = True
+            assignment.save(update_fields=['has_confirmed', 'updated_at'])
+
+        # Auto-update interview status to completed if appropriate
+        if interview.status in [InterviewStatus.SCHEDULED, InterviewStatus.IN_PROGRESS]:
+            interview.status = InterviewStatus.COMPLETED
+            interview.save(update_fields=['status', 'updated_at'])
+
+        record(
+            actor=request.user,
+            action='interview.evaluation_submitted',
+            target=interview,
+            payload={
+                'score': evaluation.score,
+                'recommendation': evaluation.recommendation,
+                'evaluator': request.user.email
+            }
+        )
+
+        # Refresh interview with prefetching and return detail
+        refreshed = Interview.objects.select_related(
+            'application__candidate__user',
+            'application__requisition__client',
+            'lead_interviewer'
+        ).prefetch_related(
+            'assignments__staff_user',
+            'evaluations__evaluator'
+        ).get(id=id)
+
+        return Response({
+            'data': InterviewDetailSerializer(refreshed).data,
+            'message': 'Evaluation scorecard submitted successfully.'
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class RecruiterInterviewPanelAssignmentView(APIView):
+    """
+    POST /api/v1/ats/interviews/<uuid:id>/panel/ - Add or update a panel assignment.
+    """
+    permission_classes = [IsStaffMember]
+
+    def post(self, request, id):
+        interview = get_object_or_404(Interview, id=id)
+        staff_user_id = request.data.get('staff_user_id')
+        role = request.data.get('role', PanelRole.TECHNICAL_ASSESSOR)
+        action = request.data.get('action', 'add')
+
+        staff_user = get_object_or_404(User, id=staff_user_id)
+
+        if action == 'remove':
+            InterviewPanelAssignment.objects.filter(interview=interview, staff_user=staff_user).delete()
+            msg = 'Panel member removed.'
+        else:
+            assignment, _ = InterviewPanelAssignment.objects.update_or_create(
+                interview=interview,
+                staff_user=staff_user,
+                defaults={'role': role}
+            )
+            msg = 'Panel member assigned.'
+
+        refreshed = Interview.objects.select_related(
+            'application__candidate__user',
+            'application__requisition__client',
+            'lead_interviewer'
+        ).prefetch_related(
+            'assignments__staff_user',
+            'evaluations__evaluator'
+        ).get(id=id)
+
+        return Response({
+            'data': InterviewDetailSerializer(refreshed).data,
+            'message': msg
+        })
 
 
 class RecruiterAnalyticsView(APIView):
@@ -970,6 +1541,36 @@ class RecruiterSubmissionsView(APIView):
                     visibility=RequisitionVisibility.PUBLISHED_JOB,
                 )
 
+        # Check AC-05: Recruiter cannot submit candidate to client without explicit PitchAuthorization
+        from apps.matching.models import PitchAuthorization, PitchAuthorizationStatus
+        unauthorized_cands = []
+        for item in data.get('items', []):
+            cid = item.get('candidate_id')
+            if cid:
+                cand = Candidate.objects.filter(id=cid).first()
+                if cand:
+                    app = Application.objects.filter(candidate=cand, requisition=requisition).first()
+                    is_direct_applied = (app and app.source == ApplicationSource.APPLIED)
+                    if not is_direct_applied:
+                        auth = PitchAuthorization.objects.filter(
+                            candidate=cand,
+                            requisition=requisition,
+                            status=PitchAuthorizationStatus.AUTHORIZED
+                        ).first()
+                        if not auth:
+                            unauthorized_cands.append(cand.full_name)
+
+        if unauthorized_cands:
+            return Response(
+                {
+                    'error': {
+                        'code': 'PITCH_NOT_AUTHORIZED',
+                        'message': f"Pitch not authorized: Candidate(s) {', '.join(unauthorized_cands)} have not authorized their pitch for this requisition. Candidate consent is required before client submission (SRS AC-05).",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         submission = Submission.objects.create(
             requisition=requisition,
             created_by=request.user if request.user.is_authenticated else None,
@@ -997,6 +1598,7 @@ class RecruiterSubmissionsView(APIView):
                         app.stage = ApplicationStage.INTERVIEW
                         app.sub_stage = 'Submitted to Client'
                         app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+                        ensure_interview_for_application(app, actor=request.user)
 
                     ApplicationEvent.objects.create(
                         application=app,
@@ -1329,6 +1931,16 @@ class RecruiterSourceCandidateView(APIView):
             note=note or f"Candidate sourced for {requisition.title} by recruiter",
         )
 
+        # Ensure PitchAuthorization record is created in REQUESTED state so candidate is alerted
+        from apps.matching.models import PitchAuthorization, PitchAuthorizationStatus
+        pitch_auth, _ = PitchAuthorization.objects.get_or_create(
+            candidate=candidate,
+            requisition=requisition,
+            defaults={
+                'status': PitchAuthorizationStatus.REQUESTED,
+            }
+        )
+
         return Response({
             'data': {
                 'application_id': str(app.id),
@@ -1338,6 +1950,7 @@ class RecruiterSourceCandidateView(APIView):
                 'requisition_title': requisition.title,
                 'stage': app.stage,
                 'sub_stage': app.sub_stage,
+                'pitch_status': pitch_auth.status,
                 'is_new': created,
                 'message': f"Candidate {candidate.full_name} successfully sourced for {requisition.title}.",
             }

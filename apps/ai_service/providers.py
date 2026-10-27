@@ -138,8 +138,8 @@ class GeminiProvider(BaseAIProvider):
         raise RuntimeError(f"All Gemini models exhausted. Last error: {last_error}")
 
     def generate_embedding(self, text: str, timeout: int = 15) -> list[float]:
-        if not self.is_available():
-            raise ValueError("Gemini API key is not configured.")
+        if getattr(self, "_embedding_disabled", False) or not self.is_available():
+            return [0.0] * 1536
 
         # text-embedding-004
         url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={self.api_key}"
@@ -161,7 +161,8 @@ class GeminiProvider(BaseAIProvider):
                         return values + [0.0] * (1536 - len(values))
                     return values[:1536]
         except Exception as e:
-            logger.warning("Gemini embedding failed: %s", e)
+            logger.warning("Gemini embedding failed; circuit breaker opened: %s", e)
+            self._embedding_disabled = True
         return [0.0] * 1536
 
 
@@ -569,12 +570,30 @@ class LocalNLPProvider(BaseAIProvider):
     def generate_embedding(self, text: str, timeout: int = 15) -> list[float]:
         import hashlib
         import math
+        import re
 
+        stopwords = {
+            'and', 'the', 'with', 'for', 'in', 'to', 'of', 'a', 'an', 'is', 'at', 'by', 'on',
+            'or', 'as', 'from', 'that', 'this', 'are', 'was', 'were', 'be', 'been', 'has', 'have'
+        }
+        tokens = [
+            w for w in re.findall(r'[a-zA-Z0-9#+.-]+', text.lower())
+            if w not in stopwords and len(w) > 1
+        ]
         vector = [0.0] * 1536
-        words = text.lower().split()
-        for idx, w in enumerate(words):
-            slot = int(hashlib.md5(w.encode("utf-8")).hexdigest(), 16) % 1536
-            vector[slot] += 1.0 / (idx + 1.0)
+        counts: dict[str, int] = {}
+        for w in tokens:
+            counts[w] = counts.get(w, 0) + 1
+
+        # Add adjacent bigrams for phrase matching (e.g. "python_django", "critical_care")
+        for i in range(len(tokens) - 1):
+            bg = f"{tokens[i]}_{tokens[i+1]}"
+            counts[bg] = counts.get(bg, 0) + 1
+
+        for term, count in counts.items():
+            slot = int(hashlib.md5(term.encode('utf-8')).hexdigest(), 16) % 1536
+            vector[slot] += 1.0 + math.log(count)
 
         norm = math.sqrt(sum(v * v for v in vector)) or 1.0
         return [round(v / norm, 6) for v in vector]
+

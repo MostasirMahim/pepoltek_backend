@@ -110,11 +110,11 @@ def list_admin_ledger_entries(status_filter: str = 'all', search: str = '') -> l
 
 def get_user_referral_summary(user) -> dict:
     """
-    Get live referral summary and ledger entries for an authenticated user.
+    Get live referral summary, pipeline records, available bounties, and ledger entries for an authenticated user.
     """
     code = getattr(user, 'referral_code', 'PEP-REF-0000')
 
-    entries = LedgerEntry.objects.filter(user=user).select_related('referral').order_by('-created_at')
+    entries = LedgerEntry.objects.filter(user=user).select_related('referral', 'bounty_type').order_by('-created_at')
 
     total_paid = entries.filter(status=PayoutStatus.PAID).aggregate(
         total=Sum('amount')
@@ -124,11 +124,50 @@ def get_user_referral_summary(user) -> dict:
         total=Sum('amount')
     )['total'] or Decimal('0.00')
 
-    referrals_count = Referral.objects.filter(referrer=user).count()
+    approved_payouts = entries.filter(status=PayoutStatus.APPROVED).aggregate(
+        total=Sum('amount')
+    )['total'] or Decimal('0.00')
+
+    total_earnings = total_paid + approved_payouts
+
+    user_referrals = Referral.objects.filter(referrer=user).select_related('candidate', 'requisition').order_by('-created_at')
+    referrals_count = user_referrals.count()
+
+    # Referred candidates list
+    referrals_list = []
+    for ref in user_referrals:
+        c_name = ref.referred_name or (ref.candidate.full_name if ref.candidate else 'Referred Talent')
+        c_email = ref.referred_email or (ref.candidate.user.email if ref.candidate else '')
+        referrals_list.append({
+            'id': str(ref.id),
+            'candidate_name': c_name,
+            'candidate_email': c_email,
+            'referral_type': ref.referral_type,
+            'source': ref.source,
+            'source_display': ref.get_source_display() if hasattr(ref, 'get_source_display') else ref.source,
+            'stage': ref.stage,
+            'stage_display': ref.get_stage_display() if hasattr(ref, 'get_stage_display') else ref.stage,
+            'scope': ref.referral_scope,
+            'requisition_title': ref.requisition.title if ref.requisition else 'General Network Talent Pool',
+            'created_at': ref.created_at.strftime('%b %d, %Y'),
+        })
+
+    # Active Bounty Types
+    active_bounties = []
+    for bt in BountyType.objects.filter(is_active=True).order_by('sort_order', '-amount'):
+        active_bounties.append({
+            'id': str(bt.id),
+            'name': bt.name,
+            'description': bt.description,
+            'amount_usd': float(bt.amount),
+            'amount_display': f"${bt.amount:,.2f}",
+            'currency': bt.currency,
+            'validity_days': bt.validity_days,
+        })
 
     ledger_rows = []
     for entry in entries:
-        candidate_name = entry.referral.referred_name or 'Referred Talent'
+        candidate_name = entry.referral.referred_name or (entry.referral.candidate.full_name if entry.referral.candidate else 'Referred Talent')
         status_display = 'Pending Milestone'
         if entry.status == PayoutStatus.PAID:
             status_display = 'Paid'
@@ -138,21 +177,28 @@ def get_user_referral_summary(user) -> dict:
             status_display = 'Cancelled'
 
         ledger_rows.append({
-            'id': f'ref-{entry.id:03d}',
+            'id': f'LEDGER-{entry.id:04d}',
+            'raw_id': entry.id,
             'candidate': candidate_name,
             'track': entry.milestone or 'Placement Bounty',
             'status': entry.referral.get_stage_display() if hasattr(entry.referral, 'get_stage_display') else entry.referral.stage,
+            'amount_usd': float(entry.amount),
             'bountyEarned': f"${entry.amount:,.2f}",
             'payoutStatus': status_display,
             'date': entry.created_at.strftime('%b %d, %Y'),
             'paidReference': entry.paid_reference or None,
+            'note': entry.note,
         })
 
     return {
         'referral_code': code,
+        'total_earnings_usd': float(total_earnings),
+        'available_balance_usd': float(approved_payouts),
         'total_paid_usd': float(total_paid),
         'pending_bounties_usd': float(pending_bounties),
         'total_referrals_count': referrals_count,
+        'referrals_list': referrals_list,
+        'active_bounties': active_bounties,
         'ledger': ledger_rows,
     }
 

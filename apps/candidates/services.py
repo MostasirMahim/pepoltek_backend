@@ -67,6 +67,11 @@ def update_candidate_profile(
         if 'skills' in data and isinstance(data['skills'], list):
             candidate.skills_cache = [s.strip() for s in data['skills'] if str(s).strip()]
 
+        # Refresh embedding vector on profile update
+        try:
+            candidate.embedding = candidate.generate_embedding_vector()
+        except Exception:
+            pass
         candidate.save()
 
         # Write audit event

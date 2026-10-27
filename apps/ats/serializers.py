@@ -8,6 +8,13 @@ from .models import (
     DeliveryChannel,
     Client,
     ClientContact,
+    Interview,
+    InterviewPanelAssignment,
+    InterviewEvaluation,
+    InterviewType,
+    InterviewStatus,
+    PanelRole,
+    RecommendationChoice,
 )
 
 
@@ -389,6 +396,165 @@ class RecruiterSourceCandidateSerializer(serializers.Serializer):
     candidate_id = serializers.UUIDField(required=True)
     requisition_id = serializers.UUIDField(required=True)
     note = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class InterviewPanelAssignmentSerializer(serializers.ModelSerializer):
+    staff_user_id = serializers.UUIDField(source='staff_user.id', read_only=True)
+    staff_user_name = serializers.SerializerMethodField()
+    staff_user_email = serializers.EmailField(source='staff_user.email', read_only=True)
+
+    class Meta:
+        model = InterviewPanelAssignment
+        fields = [
+            'id',
+            'staff_user_id',
+            'staff_user_name',
+            'staff_user_email',
+            'role',
+            'has_confirmed',
+            'notes',
+            'created_at',
+        ]
+
+    def get_staff_user_name(self, obj):
+        return obj.staff_user.get_full_name() or obj.staff_user.email
+
+
+class InterviewEvaluationSerializer(serializers.ModelSerializer):
+    evaluator_id = serializers.UUIDField(source='evaluator.id', read_only=True)
+    evaluator_name = serializers.SerializerMethodField()
+    evaluator_email = serializers.EmailField(source='evaluator.email', read_only=True)
+
+    class Meta:
+        model = InterviewEvaluation
+        fields = [
+            'id',
+            'evaluator_id',
+            'evaluator_name',
+            'evaluator_email',
+            'score',
+            'recommendation',
+            'competency_scores',
+            'feedback',
+            'submitted_at',
+        ]
+
+    def get_evaluator_name(self, obj):
+        return obj.evaluator.get_full_name() or obj.evaluator.email
+
+
+class InterviewEvaluationCreateSerializer(serializers.Serializer):
+    score = serializers.IntegerField(min_value=0, max_value=100, required=True)
+    recommendation = serializers.ChoiceField(choices=RecommendationChoice.choices, required=True)
+    competency_scores = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    feedback = serializers.CharField(required=True)
+
+
+class InterviewListSerializer(serializers.ModelSerializer):
+    candidate_id = serializers.UUIDField(source='application.candidate.id', read_only=True)
+    candidate_name = serializers.SerializerMethodField()
+    candidate_email = serializers.SerializerMethodField()
+    candidate_headline = serializers.CharField(source='application.candidate.headline', read_only=True, default='')
+    requisition_id = serializers.UUIDField(source='application.requisition.id', read_only=True)
+    requisition_title = serializers.CharField(source='application.requisition.title', read_only=True)
+    client_name = serializers.CharField(source='application.requisition.client.name', read_only=True)
+    lead_interviewer_name = serializers.SerializerMethodField()
+    assignments = InterviewPanelAssignmentSerializer(many=True, read_only=True)
+    evaluations_count = serializers.SerializerMethodField()
+    average_score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Interview
+        fields = [
+            'id',
+            'application_id',
+            'candidate_id',
+            'candidate_name',
+            'candidate_email',
+            'candidate_headline',
+            'requisition_id',
+            'requisition_title',
+            'client_name',
+            'title',
+            'interview_type',
+            'round_number',
+            'scheduled_start',
+            'scheduled_end',
+            'timezone',
+            'meeting_link',
+            'status',
+            'lead_interviewer_id',
+            'lead_interviewer_name',
+            'assignments',
+            'evaluations_count',
+            'average_score',
+            'reminder_24h_dispatched',
+            'created_at',
+        ]
+
+    def get_candidate_name(self, obj):
+        cand = obj.application.candidate
+        return cand.full_name or cand.user.get_full_name() or cand.user.email
+
+    def get_candidate_email(self, obj):
+        return obj.application.candidate.user.email
+
+    def get_lead_interviewer_name(self, obj):
+        if obj.lead_interviewer:
+            return obj.lead_interviewer.get_full_name() or obj.lead_interviewer.email
+        return None
+
+    def get_evaluations_count(self, obj):
+        return obj.evaluations.count()
+
+    def get_average_score(self, obj):
+        evals = obj.evaluations.all()
+        if not evals:
+            return None
+        scores = [e.score for e in evals]
+        return round(sum(scores) / len(scores), 1)
+
+
+class InterviewDetailSerializer(InterviewListSerializer):
+    evaluations = InterviewEvaluationSerializer(many=True, read_only=True)
+
+    class Meta(InterviewListSerializer.Meta):
+        fields = InterviewListSerializer.Meta.fields + [
+            'candidate_notes',
+            'internal_brief',
+            'reminder_24h_dispatched_at',
+            'evaluations',
+        ]
+
+
+class InterviewCreateSerializer(serializers.Serializer):
+    application_id = serializers.UUIDField(required=True)
+    title = serializers.CharField(required=True, max_length=255)
+    interview_type = serializers.CharField(required=False, max_length=60, default=InterviewType.TECHNICAL_CODING)
+    round_number = serializers.IntegerField(default=1, min_value=1)
+    scheduled_start = serializers.DateTimeField(required=True)
+    scheduled_end = serializers.DateTimeField(required=True)
+    timezone = serializers.CharField(required=False, default='UTC')
+    meeting_link = serializers.URLField(required=False, allow_blank=True, default='')
+    lead_interviewer_id = serializers.UUIDField(required=False, allow_null=True)
+    panel_member_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    candidate_notes = serializers.CharField(required=False, allow_blank=True, default='')
+    internal_brief = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class InterviewUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, max_length=255)
+    interview_type = serializers.CharField(required=False, max_length=60)
+    round_number = serializers.IntegerField(required=False, min_value=1)
+    scheduled_start = serializers.DateTimeField(required=False)
+    scheduled_end = serializers.DateTimeField(required=False)
+    timezone = serializers.CharField(required=False)
+    meeting_link = serializers.URLField(required=False, allow_blank=True)
+    status = serializers.ChoiceField(choices=InterviewStatus.choices, required=False)
+    lead_interviewer_id = serializers.UUIDField(required=False, allow_null=True)
+    candidate_notes = serializers.CharField(required=False, allow_blank=True)
+    internal_brief = serializers.CharField(required=False, allow_blank=True)
+
 
 
 
