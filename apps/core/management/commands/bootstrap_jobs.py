@@ -29,7 +29,7 @@ class Command(BaseCommand):
     help = "Bootstrap Jobs: Seeds 2 clients, 2 candidates, 6 requisitions, assessment templates, and 2 connected applications."
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.MIGRATE_HEADING("=== [3/4] Bootstrapping ATS Clients, Candidates, Jobs & Pipelines ==="))
+        self.stdout.write(self.style.MIGRATE_HEADING("=== [3/5] Bootstrapping ATS Clients, Candidates, Jobs & Pipelines ==="))
 
         recruiter_user = User.objects.filter(email="recruiter@pepoltek.com").first() or User.objects.filter(is_staff=True).first()
         tech_val_user = User.objects.filter(email="tech_validator@pepoltek.com").first() or recruiter_user
@@ -358,8 +358,8 @@ class Command(BaseCommand):
             candidate=cand_tech,
             requisition=req_tech_1,
             defaults={
-                "stage": ApplicationStage.MARKET_MAPPING,
-                "sub_stage": "Pitch Authorized",
+                "stage": ApplicationStage.TECHNICAL_VETTING,
+                "sub_stage": "Assessment Dispatched",
                 "source": ApplicationSource.REVERSE,
                 "owner": recruiter_user,
             }
@@ -375,17 +375,32 @@ class Command(BaseCommand):
             }
         )
 
-        ApplicationEvent.objects.get_or_create(
+        import datetime
+        vetting_deadline = datetime.datetime(2026, 10, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+
+        ApplicationVetting.objects.update_or_create(
             application=app_1,
-            sub_stage="Pitch Authorized",
+            template=tpl_tech,
             defaults={
-                "from_stage": "",
-                "to_stage": ApplicationStage.MARKET_MAPPING,
-                "actor": cand1_user,
-                "note": f"Candidate authorized 1-Click Pitch for {req_tech_1.title}. Dossier queued for client submission.",
+                "primary_validator": tech_val_user,
+                "assigned_by": recruiter_user,
+                "status": ApplicationVetting.Status.IN_PROGRESS,
+                "deadline": vetting_deadline,
+                "recruiter_notes": "Technical vetting assessment dispatched by recruiter. Target Due Date: 2026-10-31.",
+                "pass_threshold": 70,
             }
         )
-        self.stdout.write(self.style.SUCCESS(f"  [OK] Application 1: {cand_tech.full_name} -> {req_tech_1.title} (Stage: Market Mapping, Pitch Authorized)"))
+
+        if not ApplicationEvent.objects.filter(application=app_1, to_stage=ApplicationStage.TECHNICAL_VETTING).exists():
+            ApplicationEvent.objects.create(
+                application=app_1,
+                from_stage=ApplicationStage.MARKET_MAPPING,
+                to_stage=ApplicationStage.TECHNICAL_VETTING,
+                sub_stage="Assessment Dispatched",
+                actor=recruiter_user,
+                note=f"Candidate advanced to Technical Vetting stage for {req_tech_1.title}. Assigned to Dr. Marcus Vance. Target Due Date: 2026-10-31.",
+            )
+        self.stdout.write(self.style.SUCCESS(f"  [OK] Application 1: {cand_tech.full_name} -> {req_tech_1.title} (Stage: Technical Vetting, Assessment Dispatched)"))
 
         # Application 2: Sarah Ahmed (Healthcare) -> Intensive Care Unit (ICU) Registered Nurse
         req_health_1 = created_reqs[3]
@@ -420,16 +435,15 @@ class Command(BaseCommand):
             }
         )
 
-        ApplicationEvent.objects.get_or_create(
-            application=app_2,
-            sub_stage="Scorecard Evaluation",
-            defaults={
-                "from_stage": ApplicationStage.MARKET_MAPPING,
-                "to_stage": ApplicationStage.TECHNICAL_VETTING,
-                "actor": recruiter_user,
-                "note": f"Candidate advanced to Vetting stage for {req_health_1.title}. Assigned to Credential Officer.",
-            }
-        )
+        if not ApplicationEvent.objects.filter(application=app_2, to_stage=ApplicationStage.TECHNICAL_VETTING).exists():
+            ApplicationEvent.objects.create(
+                application=app_2,
+                from_stage=ApplicationStage.MARKET_MAPPING,
+                to_stage=ApplicationStage.TECHNICAL_VETTING,
+                sub_stage="Scorecard Evaluation",
+                actor=recruiter_user,
+                note=f"Candidate advanced to Vetting stage for {req_health_1.title}. Assigned to Credential Officer.",
+            )
         self.stdout.write(self.style.SUCCESS(f"  [OK] Application 2: {cand_health.full_name} -> {req_health_1.title} (Stage: Technical Vetting, Scorecard In Progress)"))
 
-        self.stdout.write(self.style.SUCCESS("=== [3/4] ATS Clients, Candidates, Jobs & Pipelines Completed Successfully ===\n"))
+        self.stdout.write(self.style.SUCCESS("=== [3/5] ATS Clients, Candidates, Jobs & Pipelines Completed Successfully ===\n"))

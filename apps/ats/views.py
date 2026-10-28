@@ -6,7 +6,13 @@ from apps.accounts.permissions import IsStaffMember
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from apps.core.pagination import StandardPagination
-from apps.candidates.models import Candidate, SectorChoice, ExperienceLevel
+from apps.candidates.models import (
+    Candidate,
+    SectorChoice,
+    ExperienceLevel,
+    VettingStatus,
+    ReadinessTier,
+)
 from apps.accounts.models import User
 from .models import (
     Client,

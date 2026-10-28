@@ -14,7 +14,7 @@ class Command(BaseCommand):
     help = "Bootstrap Users: Seeds all staff accounts, validator profiles, and operational test personas."
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.MIGRATE_HEADING("=== [2/4] Bootstrapping Staff Accounts & Operational Personas ==="))
+        self.stdout.write(self.style.MIGRATE_HEADING("=== [2/5] Bootstrapping Staff Accounts & Operational Personas ==="))
 
         staff_specs = [
             {
@@ -130,4 +130,4 @@ class Command(BaseCommand):
                 )
                 self.stdout.write(self.style.SUCCESS(f"  [OK] Linked Candidate Profile for {user.email}"))
 
-        self.stdout.write(self.style.SUCCESS("=== [2/4] Staff Accounts & Operational Personas Completed Successfully ===\n"))
+        self.stdout.write(self.style.SUCCESS("=== [2/5] Staff Accounts & Operational Personas Completed Successfully ===\n"))

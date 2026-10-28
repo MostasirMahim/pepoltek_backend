@@ -68,6 +68,22 @@ def assign_vetting(
     )
     if secondary_validator_ids:
         vetting.secondary_validators.set(secondary_validator_ids)
+
+    # Immediately advance application stage to Stage 3: Technical Vetting
+    if application.stage in ['discovery', 'market_mapping']:
+        from apps.ats.models import ApplicationStage, ApplicationEvent
+        from_stage = application.stage
+        application.stage = ApplicationStage.TECHNICAL_VETTING
+        application.sub_stage = 'Assessment Dispatched'
+        application.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+        ApplicationEvent.objects.create(
+            application=application,
+            from_stage=from_stage,
+            to_stage=ApplicationStage.TECHNICAL_VETTING,
+            sub_stage='Assessment Dispatched',
+            actor=actor,
+            note=f"Technical vetting assessment '{template.title}' dispatched. Target Due Date: {deadline.strftime('%Y-%m-%d') if deadline else 'Pending'}."
+        )
     return vetting
 
 

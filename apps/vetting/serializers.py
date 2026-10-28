@@ -91,19 +91,25 @@ class ApplicationVettingListSerializer(serializers.ModelSerializer):
     template_id        = serializers.UUIDField(source='template.id', read_only=True)
     template_title     = serializers.CharField(source='template.title', read_only=True)
     template_category  = serializers.CharField(source='template.category', read_only=True)
+    template_sector    = serializers.CharField(source='template.sector', read_only=True)
+    total_marks        = serializers.IntegerField(source='template.total_marks', read_only=True)
+    marks_distribution = serializers.JSONField(source='template.marks_distribution', read_only=True)
+    instructions       = serializers.CharField(source='template.instructions', read_only=True)
     candidate_name     = serializers.CharField(source='application.candidate.user.full_name', read_only=True, default='')
     job_title          = serializers.CharField(source='application.requisition.title', read_only=True, default='')
     primary_validator  = ValidatorUserSerializer(read_only=True)
     is_overdue         = serializers.BooleanField(read_only=True)
     application_id     = serializers.UUIDField(read_only=True)
+    target_due_date    = serializers.DateTimeField(source='deadline', read_only=True)
 
     class Meta:
         model  = ApplicationVetting
         fields = [
             'id', 'application_id', 'candidate_name', 'job_title',
-            'template_id', 'template_title', 'template_category',
+            'template_id', 'template_title', 'template_category', 'template_sector',
+            'total_marks', 'marks_distribution', 'instructions',
             'status', 'final_score', 'pass_threshold',
-            'scheduled_start', 'deadline', 'primary_validator', 'is_overdue',
+            'scheduled_start', 'deadline', 'target_due_date', 'primary_validator', 'is_overdue',
             'created_at',
         ]
 
@@ -114,6 +120,7 @@ class ApplicationVettingDetailSerializer(serializers.ModelSerializer):
     secondary_validators = ValidatorUserSerializer(many=True, read_only=True)
     assigned_by        = ValidatorUserSerializer(read_only=True)
     is_overdue         = serializers.BooleanField(read_only=True)
+    target_due_date    = serializers.DateTimeField(source='deadline', read_only=True)
 
     class Meta:
         model  = ApplicationVetting
@@ -136,10 +143,28 @@ class ApplicationVettingCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         secondary_ids = validated_data.pop('secondary_validator_ids', [])
-        validated_data['assigned_by'] = self.context['request'].user
+        actor = self.context['request'].user
+        validated_data['assigned_by'] = actor
         vetting = super().create(validated_data)
         if secondary_ids:
             vetting.secondary_validators.set(secondary_ids)
+
+        # Immediately advance the application to Stage 3: Technical Vetting
+        app = vetting.application
+        if app.stage in ['discovery', 'market_mapping']:
+            from apps.ats.models import ApplicationStage, ApplicationEvent
+            from_stage = app.stage
+            app.stage = ApplicationStage.TECHNICAL_VETTING
+            app.sub_stage = 'Assessment Dispatched'
+            app.save(update_fields=['stage', 'sub_stage', 'updated_at'])
+            ApplicationEvent.objects.create(
+                application=app,
+                from_stage=from_stage,
+                to_stage=ApplicationStage.TECHNICAL_VETTING,
+                sub_stage='Assessment Dispatched',
+                actor=actor,
+                note=f"Technical vetting assessment '{vetting.template.title}' dispatched. Target Due Date: {vetting.deadline.strftime('%Y-%m-%d') if vetting.deadline else 'Pending'}."
+            )
         return vetting
 
 

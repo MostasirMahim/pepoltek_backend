@@ -124,9 +124,13 @@ class ApplicationVettingViewSet(viewsets.ModelViewSet):
         if template_id:
             qs = qs.filter(template_id=template_id)
 
-        # Validators see only their own assignments unless staff
+        # Candidates see their own vettings, validators see their assignments, staff sees all
         if not _is_staff_or_admin(user):
-            qs = qs.filter(primary_validator=user) | qs.filter(secondary_validators=user)
+            qs = qs.filter(
+                Q(application__candidate__user=user)
+                | Q(primary_validator=user)
+                | Q(secondary_validators=user)
+            )
         return qs.distinct()
 
     def get_serializer_class(self):

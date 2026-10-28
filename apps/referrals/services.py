@@ -638,6 +638,11 @@ def seed_referral_sample_data():
     )
 
 
+def seed_user_sample_referrals(target_user):
+    """No-op: strict production data integrity - never inject mock or dummy records."""
+    pass
+
+
 def _seed_default_bounty_types():
     """Seed the default admin-managed bounty type catalog."""
     defaults = [

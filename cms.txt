@@ -3,7 +3,7 @@ PEPOLTEK PLATFORM - PRODUCTION SEED & BOOTSTRAP REGISTRY
 ================================================================================
 House Style Notice: Zero em dashes in all documentation, commands, and comments.
 
-This registry tracks the 4 independent, modular bootstrap commands designed for
+This registry tracks the 5 independent, modular bootstrap commands designed for
 production environments, automated staging CI/CD, and developer setup.
 
 --------------------------------------------------------------------------------
@@ -13,9 +13,9 @@ Command:
   python manage.py bootstrap_all
 
 Description:
-  Executes bootstrap_auth, bootstrap_users, bootstrap_jobs, and bootstrap_cms
-  in guaranteed sequential order with unified status reporting. Idempotent and safe
-  to run repeatedly.
+  Executes bootstrap_auth, bootstrap_users, bootstrap_jobs, bootstrap_leads,
+  and bootstrap_cms in guaranteed sequential order with unified status reporting.
+  Idempotent and safe to run repeatedly.
 
 --------------------------------------------------------------------------------
 2. INDIVIDUAL BOOTSTRAP MODULES
@@ -84,7 +84,28 @@ Description:
         * Pipeline 2: Sarah Ahmed, RN -> Intensive Care Unit (ICU) Registered Nurse
           Stage: Technical Vetting | Pitch Authorized | ApplicationVetting assigned to Credential Officer
 
-[Module 4] Headless CMS & Public Site Content
+[Module 4] Commercial Employer Leads & Inbound Contact Inquiries
+  Command:
+    python manage.py bootstrap_leads
+  File:
+    apps/core/management/commands/bootstrap_leads.py
+  Seeded Components:
+    - 6 Commercial Employer Leads across Technology, Healthcare, and Cross-Domain tracks:
+        * Apex Financial Cloud Systems: 3x Distributed Go/Rust Engineers ($130 to $160/hr) - Evelyn Vance (Status: New)
+        * St. Marys Regional Health Network: 4x ICU Nurses and 1x CNM ($90 to $115/hr) - Dr. Alistair Finch (Status: Discovery Booked)
+        * QuantumEdge Telemetry Labs: 2x Full Stack Specialists ($125 to $150/hr) - Marcus Brody (Status: Qualified)
+        * Vanguard BioTech Genomics: 2x Bioinformatics Engineers and 1x Compliance Officer ($140 to $175/hr) - David Sterling (Status: Discovery Running)
+        * Aura Health AI Diagnostics: 1x Lead ML/Vision Engineer ($170k to $210k/yr) - Samantha Reed (Status: Contacted)
+        * FinTech Velocity Inc.: 2x Senior DevOps Engineers ($110 to $135/hr) - Hiroshi Tanaka (Status: Converted to ATS Client)
+    - Lead Activity Audit Logs connected to staff handlers (Admin, Recruiter, Analyst, Validator)
+    - 5 Inbound Contact Inquiries with category classification, status, and response notes:
+        * Charlotte Dubois (Partnership): Global Healthcare Consortium RPO Exploration (Status: In Progress)
+        * Elena Rostova (Talent Support): Dedicated Go/Rust Engineering Squads (Status: New)
+        * Nathaniel Cross (Press/Media): 7-Day Technical Vetting & Benchmark SLAs Feature (Status: Responded)
+        * Kavita Sharma (Feedback): Document Parser Clinical Licensure Verification UX (Status: Closed)
+        * Dr. Henrik Lindqvist (General): EU/UK EOR Compliance for Clinical Researchers (Status: New)
+
+[Module 5] Headless CMS & Public Site Content
   Command:
     python manage.py bootstrap_cms
   File:

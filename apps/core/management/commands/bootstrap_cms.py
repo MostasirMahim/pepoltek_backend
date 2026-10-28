@@ -1,7 +1,7 @@
 """
 apps/core/management/commands/bootstrap_cms.py
 
-Bootstrap Script 4 of 4: Seeds master dynamic site navigation, full homepage, and CMS collections.
+Bootstrap Script 5 of 5: Seeds master dynamic site navigation, full homepage, and CMS collections.
 Strict House Style Rule: Zero em dashes in all strings and output.
 """
 from django.core.management.base import BaseCommand
@@ -201,7 +201,7 @@ class Command(BaseCommand):
     help = "Bootstrap CMS: Seeds master site navigation, 9-section homepage, and all public content collections."
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.MIGRATE_HEADING("=== [4/4] Bootstrapping Headless CMS & Public Content ==="))
+        self.stdout.write(self.style.MIGRATE_HEADING("=== [5/5] Bootstrapping Headless CMS & Public Content ==="))
 
         admin_user = User.objects.filter(is_superuser=True).first() or User.objects.filter(is_staff=True).first()
         if not admin_user:
@@ -297,4 +297,4 @@ class Command(BaseCommand):
                 )
                 self.stdout.write(self.style.SUCCESS(f"  [OK] {label}: Published as version {b.version}."))
 
-        self.stdout.write(self.style.SUCCESS("=== [4/4] Headless CMS & Public Content Completed Successfully ===\n"))
+        self.stdout.write(self.style.SUCCESS("=== [5/5] Headless CMS & Public Content Completed Successfully ===\n"))

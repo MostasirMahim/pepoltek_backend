@@ -57,9 +57,10 @@ Staff Roles:
   Business Analyst: business_analyst@pepoltek.com / Password123!
 
 # 10. Production Bootstrap & Seed Commands (Idempotent)
-python manage.py bootstrap_all   : Master runner executing 1 -> 2 -> 3 -> 4 sequentially.
+python manage.py bootstrap_all   : Master runner executing 1 -> 2 -> 3 -> 4 -> 5 sequentially.
 python manage.py bootstrap_auth  : SuperAdmin, 9 RBAC roles, choices, and bounty types.
 python manage.py bootstrap_users : Staff accounts, validators with ValidatorProfiles, candidate persona.
 python manage.py bootstrap_jobs  : 2 clients, 2 candidates, 6 requisitions, 2 templates, 2 pipelines with pitch auth.
+python manage.py bootstrap_leads : 6 enterprise employer leads, activity logs, and 5 inbound contact inquiries.
 python manage.py bootstrap_cms   : Master navigation, 9-section homepage, services, case studies, healthcare.
 (See cms.txt for full detailed seed documentation).

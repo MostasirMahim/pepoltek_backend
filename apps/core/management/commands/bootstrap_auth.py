@@ -18,7 +18,7 @@ class Command(BaseCommand):
     help = "Bootstrap Auth: Superadmin user, system roles, permissions, choice matrix, and bounty types."
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.MIGRATE_HEADING("=== [1/4] Bootstrapping Auth & Core Infrastructure ==="))
+        self.stdout.write(self.style.MIGRATE_HEADING("=== [1/5] Bootstrapping Auth & Core Infrastructure ==="))
 
         # 1. Super Admin Account
         admin_email = "admin@pepoltek.com"
@@ -132,4 +132,4 @@ class Command(BaseCommand):
             bounties_count += 1
 
         self.stdout.write(self.style.SUCCESS(f"  [OK] Referral Bounty Catalog: {bounties_count} standard bounty types verified."))
-        self.stdout.write(self.style.SUCCESS("=== [1/4] Auth, RBAC, Choices & Bounties Completed Successfully ===\n"))
+        self.stdout.write(self.style.SUCCESS("=== [1/5] Auth, RBAC, Choices & Bounties Completed Successfully ===\n"))
