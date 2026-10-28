@@ -13,7 +13,7 @@ _env_file = BASE_DIR / env('ENV_FILE', default='.env')
 if not _env_file.exists() and (BASE_DIR / '.env.production').exists():
     _env_file = BASE_DIR / '.env.production'
 if _env_file.exists():
-    environ.Env.read_env(_env_file, overwrite=False)
+    environ.Env.read_env(_env_file, overwrite=True)
 
 # ─── Security ─────────────────────────────────────────────────────────────────
 SECRET_KEY = env('SECRET_KEY')
