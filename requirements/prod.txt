@@ -1,5 +1,4 @@
 -r base.txt
 
 gunicorn==22.0.0
-whitenoise[brotli]==6.9.0
 sentry-sdk[django]==2.3.1

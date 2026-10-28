@@ -9,7 +9,11 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env()
-environ.Env.read_env(BASE_DIR / '.env', overwrite=True)
+_env_file = BASE_DIR / env('ENV_FILE', default='.env')
+if not _env_file.exists() and (BASE_DIR / '.env.production').exists():
+    _env_file = BASE_DIR / '.env.production'
+if _env_file.exists():
+    environ.Env.read_env(_env_file, overwrite=False)
 
 # ─── Security ─────────────────────────────────────────────────────────────────
 SECRET_KEY = env('SECRET_KEY')
@@ -238,7 +242,7 @@ SIMPLE_JWT = {
     'AUTH_COOKIE': 'access_token',
     'AUTH_COOKIE_REFRESH': 'refresh_token',
     'AUTH_COOKIE_HTTP_ONLY': True,
-    'AUTH_COOKIE_SECURE': not DEBUG,
+    'AUTH_COOKIE_SECURE': env.bool('AUTH_COOKIE_SECURE', default=env.bool('SECURE_SSL_REDIRECT', default=False)),
     'AUTH_COOKIE_SAMESITE': 'Lax',
 }
 
@@ -262,7 +266,7 @@ CORS_ALLOW_HEADERS = [
 
 CSRF_COOKIE_HTTPONLY = False  # Frontend must read CSRF token
 CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_TRUSTED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:3000'])
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:3000']))
 
 # ─── Allauth ─────────────────────────────────────────────────────────────────
 AUTHENTICATION_BACKENDS = [
