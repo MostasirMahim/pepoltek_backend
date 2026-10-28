@@ -285,7 +285,13 @@ AXES_COOLOFF_TIME = timedelta(minutes=30)
 AXES_LOCKOUT_PARAMETERS = ['ip_address', 'username']
 
 # ─── Field Encryption ─────────────────────────────────────────────────────────
-FIELD_ENCRYPTION_KEY = env('FIELD_ENCRYPTION_KEY', default='')
+_raw_encryption_key = env('FIELD_ENCRYPTION_KEY', default='RV_NauDPp_PmhYT7ro6P6E18eNL8Jt4ze48yg9HrpsY=')
+try:
+    from cryptography.fernet import Fernet
+    Fernet(_raw_encryption_key)
+    FIELD_ENCRYPTION_KEY = _raw_encryption_key
+except Exception:
+    FIELD_ENCRYPTION_KEY = 'RV_NauDPp_PmhYT7ro6P6E18eNL8Jt4ze48yg9HrpsY='
 
 # ─── File Storage ─────────────────────────────────────────────────────────────
 AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID', default='')
