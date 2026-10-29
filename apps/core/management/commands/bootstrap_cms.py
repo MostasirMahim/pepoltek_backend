@@ -6,8 +6,8 @@ Strict House Style Rule: Zero em dashes in all strings and output.
 """
 from django.core.management.base import BaseCommand
 from apps.accounts.models import User
-from apps.cms.models import SiteContent
-from apps.cms.services import publish_content
+from apps.cms.models import SiteContent, CaseStudy
+from apps.cms.services import publish_content, seed_default_case_studies_if_empty
 from apps.cms.management.commands.seed_cms_content import HOMEPAGE_DATA, OTHER_SEEDS
 
 
@@ -264,6 +264,8 @@ class Command(BaseCommand):
             notes="Bootstrap alias for /case-studies API",
         )
         self.stdout.write(self.style.SUCCESS(f"  [OK] Case Studies Collection: Published as version {c_block.version}."))
+        relational_studies = seed_default_case_studies_if_empty(author=admin_user)
+        self.stdout.write(self.style.SUCCESS(f"  [OK] Relational CaseStudy Models: Verified {len(relational_studies)} technical blueprints."))
 
         # 5. Healthcare Collection
         health_data = OTHER_SEEDS[SiteContent.Key.HEALTHCARE_PAGE]

@@ -53,6 +53,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, db_index=True)
     full_name = models.CharField(max_length=255, blank=True)
 
+    # Profile picture stored in S3 private bucket
+    profile_picture = models.CharField(max_length=500, blank=True, null=True)  # S3 object key
+
     auth_provider = models.CharField(
         max_length=20, choices=AuthProvider.choices, default=AuthProvider.EMAIL
     )

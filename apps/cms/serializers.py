@@ -3,7 +3,7 @@ cms/serializers.py
 DRF serializers for CMS content management API.
 """
 from rest_framework import serializers
-from .models import SiteContent
+from .models import SiteContent, CaseStudy
 
 
 class SiteContentPublishSerializer(serializers.Serializer):
@@ -68,3 +68,130 @@ class CaseStudiesPayloadSerializer(serializers.Serializer):
         child=CaseStudySerializer(),
         min_length=0,
     )
+
+
+# ---------------------------------------------------------------------------
+# CaseStudy Relational Model Serializers
+# ---------------------------------------------------------------------------
+
+class CaseStudyModelListSerializer(serializers.ModelSerializer):
+    """Compact serializer for high-density tables and catalog lists."""
+    author_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CaseStudy
+        fields = [
+            'id',
+            'slug',
+            'title',
+            'subtitle',
+            'category',
+            'sector',
+            'sector_label',
+            'client_name',
+            'client_industry',
+            'timeframe',
+            'badge',
+            'endpoint',
+            'project_type',
+            'status',
+            'is_featured',
+            'order',
+            'hero_image',
+            'summary',
+            'tech_stack',
+            'metrics',
+            'author_name',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_author_name(self, obj) -> str:
+        if obj.author:
+            return obj.author.full_name or obj.author.email
+        return 'System'
+
+
+class CaseStudyModelDetailSerializer(serializers.ModelSerializer):
+    """Complete serializer for detail page, preview, and admin dossier."""
+    author_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CaseStudy
+        fields = [
+            'id',
+            'slug',
+            'title',
+            'subtitle',
+            'category',
+            'sector',
+            'sector_label',
+            'client_name',
+            'client_industry',
+            'timeframe',
+            'badge',
+            'endpoint',
+            'project_type',
+            'status',
+            'is_featured',
+            'order',
+            'hero_image',
+            'summary',
+            'challenge',
+            'solution',
+            'content',
+            'business_impact',
+            'requirements',
+            'architecture',
+            'tech_stack',
+            'validation_logs',
+            'metrics',
+            'test_coverage',
+            'quote',
+            'author_name',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_author_name(self, obj) -> str:
+        if obj.author:
+            return obj.author.full_name or obj.author.email
+        return 'System'
+
+
+class CaseStudyWriteSerializer(serializers.ModelSerializer):
+    """Input serializer for create and update operations."""
+
+    class Meta:
+        model = CaseStudy
+        fields = [
+            'slug',
+            'title',
+            'subtitle',
+            'category',
+            'sector',
+            'sector_label',
+            'client_name',
+            'client_industry',
+            'timeframe',
+            'badge',
+            'endpoint',
+            'project_type',
+            'status',
+            'is_featured',
+            'order',
+            'hero_image',
+            'summary',
+            'challenge',
+            'solution',
+            'content',
+            'business_impact',
+            'requirements',
+            'architecture',
+            'tech_stack',
+            'validation_logs',
+            'metrics',
+            'test_coverage',
+            'quote',
+        ]
+

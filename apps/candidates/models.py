@@ -65,6 +65,9 @@ class Candidate(BaseModel):
     full_name = EncryptedCharField(max_length=255)
     phone = EncryptedCharField(max_length=30, blank=True)
 
+    # Profile picture stored in S3 private bucket (optional)
+    profile_picture = models.CharField(max_length=500, blank=True, null=True)  # S3 object key
+
     sector = models.CharField(max_length=20, choices=SectorChoice.choices)
     domain = models.CharField(max_length=100, blank=True)  # e.g. Backend, Nursing
     level = models.CharField(max_length=20, choices=ExperienceLevel.choices)

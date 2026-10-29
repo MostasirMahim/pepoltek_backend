@@ -21,11 +21,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
 from apps.accounts.permissions import IsAdminOrSuperAdmin
-from .models import SiteContent
+from .models import SiteContent, CaseStudy
 from .serializers import (
     SiteContentPublishSerializer,
     SiteContentRollbackSerializer,
     SiteContentVersionSerializer,
+    CaseStudyModelListSerializer,
+    CaseStudyModelDetailSerializer,
+    CaseStudyWriteSerializer,
 )
 from .services import (
     get_published_content,
@@ -34,11 +37,18 @@ from .services import (
     rollback_content,
     get_case_studies,
     get_case_study_by_slug,
+    create_case_study,
+    update_case_study,
+    delete_case_study,
+    seed_default_case_studies_if_empty,
 )
 from .selectors import (
     list_all_published,
     list_versions_for_key,
     get_content_keys,
+    list_case_studies,
+    get_case_study_by_id,
+    get_case_studies_kpis,
 )
 
 
@@ -75,21 +85,36 @@ class PublicSiteContentView(APIView):
 class CaseStudiesListView(APIView):
     """
     GET /api/v1/content/case-studies/
-    List filterable case studies with verified proof metrics.
-    Now reads from DB (SiteContent) with fallback to default seed data.
+    List published case studies with verified proof metrics.
+    Supports filtering by sector, category, featured flag, and search keywords.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
         sector = request.query_params.get('sector', 'all')
-        studies = get_case_studies(sector)
-        return Response({'data': studies})
+        category = request.query_params.get('category', 'all')
+        featured_param = request.query_params.get('featured')
+        featured = True if featured_param in ['true', '1'] else None
+        search = request.query_params.get('search')
+
+        if not CaseStudy.objects.exists():
+            seed_default_case_studies_if_empty()
+
+        qs = list_case_studies(
+            sector=sector,
+            category=category,
+            status=CaseStudy.Status.PUBLISHED,
+            is_featured=featured,
+            search=search,
+        )
+        serializer = CaseStudyModelListSerializer(qs, many=True)
+        return Response({'data': serializer.data})
 
 
 class CaseStudyDetailView(APIView):
     """
     GET /api/v1/content/case-studies/<slug>/
-    Retrieve detail for a single case study.
+    Retrieve detail for a single case study by slug.
     """
     permission_classes = [AllowAny]
 
@@ -292,3 +317,119 @@ class AdminContentHistoryView(APIView):
         blocks = list_versions_for_key(key, limit=50)
         serializer = SiteContentVersionSerializer(blocks, many=True)
         return Response({'data': serializer.data})
+
+
+# ---------------------------------------------------------------------------
+# Admin Case Study Management API
+# ---------------------------------------------------------------------------
+
+class AdminCaseStudiesListView(APIView):
+    """
+    GET /api/v1/content/admin/case-studies/
+    List all case studies (drafts, published, archived) with KPIs and filtering.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get(self, request):
+        if not CaseStudy.objects.exists():
+            seed_default_case_studies_if_empty(author=request.user)
+
+        sector = request.query_params.get('sector')
+        category = request.query_params.get('category')
+        study_status = request.query_params.get('status')
+        featured_param = request.query_params.get('featured')
+        featured = True if featured_param in ['true', '1'] else (False if featured_param in ['false', '0'] else None)
+        search = request.query_params.get('search')
+
+        qs = list_case_studies(
+            sector=sector,
+            category=category,
+            status=study_status,
+            is_featured=featured,
+            search=search,
+        )
+        serializer = CaseStudyModelListSerializer(qs, many=True)
+        kpis = get_case_studies_kpis()
+
+        return Response({
+            'data': serializer.data,
+            'kpis': kpis,
+        })
+
+
+class AdminCaseStudyCreateView(APIView):
+    """
+    POST /api/v1/content/admin/case-studies/
+    Create a new Case Study in the database.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def post(self, request):
+        serializer = CaseStudyWriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        case_study = create_case_study(
+            data=serializer.validated_data,
+            author=request.user,
+            request=request,
+        )
+        detail_serializer = CaseStudyModelDetailSerializer(case_study)
+        return Response(
+            {
+                'data': detail_serializer.data,
+                'message': 'Technical case study created successfully.',
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminCaseStudyDetailView(APIView):
+    """
+    GET, PUT/PATCH, DELETE /api/v1/content/admin/case-studies/<uuid:id>/
+    Manage single case study: view full dossier, update fields, or soft-delete.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get(self, request, id):
+        case_study = get_case_study_by_id(id)
+        if not case_study:
+            return Response({'error': 'Case study not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CaseStudyModelDetailSerializer(case_study)
+        return Response({'data': serializer.data})
+
+    def put(self, request, id):
+        return self.patch(request, id)
+
+    def patch(self, request, id):
+        case_study = get_case_study_by_id(id)
+        if not case_study:
+            return Response({'error': 'Case study not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CaseStudyWriteSerializer(case_study, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_case_study = update_case_study(
+            case_study=case_study,
+            data=serializer.validated_data,
+            author=request.user,
+            request=request,
+        )
+        detail_serializer = CaseStudyModelDetailSerializer(updated_case_study)
+        return Response({
+            'data': detail_serializer.data,
+            'message': 'Technical case study updated successfully.',
+        })
+
+    def delete(self, request, id):
+        case_study = get_case_study_by_id(id)
+        if not case_study:
+            return Response({'error': 'Case study not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        delete_case_study(case_study, author=request.user, request=request)
+        return Response({
+            'message': f'Case study "{case_study.title}" removed successfully.',
+        })
+

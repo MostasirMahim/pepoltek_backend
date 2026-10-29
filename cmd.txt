@@ -63,4 +63,5 @@ python manage.py bootstrap_users : Staff accounts, validators with ValidatorProf
 python manage.py bootstrap_jobs  : 2 clients, 2 candidates, 6 requisitions, 2 templates, 2 pipelines with pitch auth.
 python manage.py bootstrap_leads : 6 enterprise employer leads, activity logs, and 5 inbound contact inquiries.
 python manage.py bootstrap_cms   : Master navigation, 9-section homepage, services, case studies, healthcare.
+python manage.py seed_case_studies : Dedicated seeder for 8 authentic production case studies and architectures.
 (See cms.txt for full detailed seed documentation).
